@@ -1,0 +1,109 @@
+{
+  "1.0.1": {
+    "applied_at": "2026-10-19 08:25:00",
+    "description": "Пакет по аудиту: убран дубликат registry в app.py; _verify_patches пропускает патчи со skip_reason; авто-очистка patch_runs и patch_backups; отключена кнопка #tskCompactToggle (v1.0.12); обрезка changes в журнале (10 последних); убраны debug-print из _merge_log_data_into_task; sliding session lifetime.",
+    "target_version": "1.0.1",
+    "operations_count": 11,
+    "changes": [
+      {
+        "path": "static\\tracker.js",
+        "backup": "patch_backups\\static\\tracker.js.bak-20261019_082500_74594",
+        "created": false
+      },
+      {
+        "path": "app.py",
+        "backup": "patch_backups\\app.py.bak-20261019_082500_76365",
+        "created": false
+      },
+      {
+        "path": "app.py",
+        "backup": "patch_backups\\app.py.bak-20261019_082500_77383",
+        "created": false
+      },
+      {
+        "path": "app.py",
+        "backup": "patch_backups\\app.py.bak-20261019_082500_78254",
+        "created": false
+      },
+      {
+        "path": "app.py",
+        "backup": "patch_backups\\app.py.bak-20261019_082500_79379",
+        "created": false
+      },
+      {
+        "path": "app.py",
+        "backup": "patch_backups\\app.py.bak-20261019_082500_80355",
+        "created": false
+      },
+      {
+        "path": "app.py",
+        "backup": "patch_backups\\app.py.bak-20261019_082500_81222",
+        "created": false
+      },
+      {
+        "path": "plugins\\updater.py",
+        "backup": "patch_backups\\plugins\\updater.py.bak-20261019_082500_81925",
+        "created": false
+      },
+      {
+        "path": "plugins\\updater.py",
+        "backup": "patch_backups\\plugins\\updater.py.bak-20261019_082500_82766",
+        "created": false
+      },
+      {
+        "path": "patcher.py",
+        "backup": "patch_backups\\patcher.py.bak-20261019_082500_83531",
+        "created": false
+      }
+    ]
+  },
+  "1.0.2": {
+    "applied_at": "2026-10-19 08:28:43",
+    "description": "B3: единый перехватчик fetch на /api/tracker/log/save. Порядок: собрать multi-поля из DOM → overflow → уже-есть → отправить → auto-assign → close all modals. Старые перехватчики (PATCH07, v1.0.4, v1.0.10, v1.0.19, v1.0.24, v1.0.32) заглушены guard-флагами в prepend.",
+    "target_version": "1.0.2",
+    "operations_count": 2,
+    "changes": [
+      {
+        "path": "static\\tracker.js",
+        "backup": "patch_backups\\static\\tracker.js.bak-20261019_082843_25743",
+        "created": false
+      },
+      {
+        "path": "static\\tracker.js",
+        "backup": "patch_backups\\static\\tracker.js.bak-20261019_082843_28121",
+        "created": false
+      }
+    ]
+  },
+  "1.0.3": {
+    "applied_at": "2026-10-19 08:32:48",
+    "description": "Возврат overflow-диалога (>8 часов/день) в единый перехватчик log/save. Опции: Принять / Распределить / Отмена. Запоминание выбора в sessionStorage.",
+    "target_version": "1.0.3",
+    "operations_count": 2,
+    "changes": [
+      {
+        "path": "static\\tracker.js",
+        "backup": "patch_backups\\static\\tracker.js.bak-20261019_083248_12745",
+        "created": false
+      },
+      {
+        "path": "static\\tracker.js",
+        "backup": "patch_backups\\static\\tracker.js.bak-20261019_083248_14749",
+        "created": false
+      }
+    ]
+  },
+  "1.0.6": {
+    "applied_at": "2026-10-19 08:39:57",
+    "description": "STATIC_VERSION по SHA256 tracker.js + app.css + settings.js. Отступ 4 — внутри create_app().",
+    "target_version": "1.0.6",
+    "operations_count": 1,
+    "changes": [
+      {
+        "path": "app.py",
+        "backup": "patch_backups\\app.py.bak-20261019_083957_17863",
+        "created": false
+      }
+    ]
+  }
+}
