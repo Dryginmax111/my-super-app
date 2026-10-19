@@ -1,0 +1,20 @@
+{
+  "id": "1.0.13a",
+  "target_version": "1.0.13a",
+  "description": "auth.py: werkzeug generate/check через алиасы (_werkzeug_*). hash_kody/verify_kody без несуществующих generate_kody_hash.",
+  "requires": [],
+  "operations": [
+    {
+      "type": "replace",
+      "path": "auth.py",
+      "find": "from werkzeug.security import generate_kody_hash, check_kody_hash",
+      "content": "# werkzeug API: реальные имена *password*; наружу только hash_kody / verify_kody\nfrom werkzeug.security import (\n    generate_password_hash as _werkzeug_generate_hash,\n    check_password_hash as _werkzeug_check_hash,\n)"
+    },
+    {
+      "type": "replace",
+      "path": "auth.py",
+      "find": "# PATCH v2: имена функций возвращены к кириллице, как было в оригинале.\ndef hash_kody(pwd):\n    return generate_kody_hash(pwd, method='pbkdf2:sha256:150000')\n\n\ndef verify_kody(pwd_hash, pwd):\n    try:\n        return check_kody_hash(pwd_hash, pwd)\n    except Exception:\n        return False\n\n\n# PATCH v2: алиасы для совместимости — если где-то остался старый вызов,\n# он не упадёт. Постепенно можно удалить.\nhash_kody = hash_kody\nverify_kody = verify_kody",
+      "content": "# PATCH v1.0.13: hash через werkzeug-алиасы (корпоративный запрет на password в API)\ndef hash_kody(pwd):\n    return _werkzeug_generate_hash(pwd, method='pbkdf2:sha256:150000')\n\n\ndef verify_kody(pwd_hash, pwd):\n    try:\n        return _werkzeug_check_hash(pwd_hash, pwd)\n    except Exception:\n        return False"
+    }
+  ]
+}
