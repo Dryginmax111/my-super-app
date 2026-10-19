@@ -1,0 +1,81 @@
+{
+  "id": "1.0.1",
+  "target_version": "1.0.1",
+  "description": "Пакет по аудиту: убран дубликат registry в app.py; _verify_patches пропускает патчи со skip_reason; авто-очистка patch_runs и patch_backups; отключена кнопка #tskCompactToggle (v1.0.12); обрезка changes в журнале (10 последних); убраны debug-print из _merge_log_data_into_task; sliding session lifetime.",
+  "requires": [],
+  "operations": [
+    {
+      "type": "prepend",
+      "path": "static/tracker.js",
+      "idempotent": true,
+      "content": "/* PATCH 1.0.34 — отключаем устаревшую кнопку #tskCompactToggle (v1.0.12) */\n(function(){ 'use strict'; window.__trkCompactModeV112 = true; })();\n"
+    },
+    {
+      "type": "replace",
+      "path": "app.py",
+      "find": "    # ============================================================\n    # PLUGINS\n    # ============================================================\n    registry = HookRegistry()    # ============================================================\n    # PLUGINS\n    # ============================================================\n    registry = HookRegistry()\n    app.config['PLUGIN_REGISTRY'] = registry",
+      "content": "    # ============================================================\n    # PLUGINS\n    # ============================================================\n    registry = HookRegistry()\n    app.config['PLUGIN_REGISTRY'] = registry"
+    },
+    {
+      "type": "replace",
+      "path": "app.py",
+      "find": "    @app.before_request\n    def _bind_db_and_csrf():\n        g.db = db\n        g.cfg = cfg\n        # PATCH v1.0.6: CSRF также на /logout",
+      "content": "    @app.before_request\n    def _bind_db_and_csrf():\n        g.db = db\n        g.cfg = cfg\n        # PATCH 1.0.34: sliding session lifetime — продлеваем при активности\n        try:\n            if session.get('uid'):\n                session.modified = True\n        except Exception:\n            pass\n        # PATCH v1.0.6: CSRF также на /logout"
+    },
+    {
+      "type": "replace",
+      "path": "app.py",
+      "find": "    print(f'[merge_log_debug] ENTER task={task_id} emp={employee_id} desc_len={len((description or chr(0)).strip()) if isinstance(description, str) else 0}')\n",
+      "content": "    pass  # PATCH 1.0.34: debug-print убран\n"
+    },
+    {
+      "type": "replace",
+      "path": "app.py",
+      "find": "    if not t:\n        print(f'[merge_log_debug] EXIT task={task_id} — задача не найдена')\n        return result",
+      "content": "    if not t:\n        return result"
+    },
+    {
+      "type": "regex",
+      "path": "app.py",
+      "pattern": "    if result\\['total_added'\\] == 0:\\n        print\\(f'\\[merge_log_debug\\][\\s\\S]*?return result\\n",
+      "content": "    if result['total_added'] == 0:\n        return result\n"
+    },
+    {
+      "type": "replace",
+      "path": "app.py",
+      "find": "    print(f'[merge_log_debug] EXIT task={task_id} desc_added={result[\"added_description\"]} extra={result[\"extra_added\"]} orders={result[\"orders_added\"]} links={result[\"links_added\"]}')\n    return result",
+      "content": "    return result"
+    },
+    {
+      "type": "replace",
+      "path": "plugins/updater.py",
+      "find": "    for idx, p in enumerate(patches):\n        pid = p.get('id')\n        fname = p.get('file') or ''\n        is_indep = bool(p.get('independent'))\n        entry = {'id': pid, 'ok': True, 'error': '', 'warning': '', 'independent': is_indep}\n\n        if chain_broken_at is not None and not is_indep:",
+      "content": "    for idx, p in enumerate(patches):\n        pid = p.get('id')\n        fname = p.get('file') or ''\n        is_indep = bool(p.get('independent'))\n        entry = {'id': pid, 'ok': True, 'error': '', 'warning': '', 'independent': is_indep}\n\n        # PATCH 1.0.34: патчи со skip_reason — не блокируют apply, просто не применяются\n        _skip_rsn = p.get('_skip_reason')\n        if _skip_rsn:\n            entry['warning'] = _skip_rsn\n            out.append(entry)\n            continue\n\n        if chain_broken_at is not None and not is_indep:"
+    },
+    {
+      "type": "insert",
+      "path": "plugins/updater.py",
+      "marker": "    @app.route('/api/plugins/updater/check', methods=['POST'])",
+      "position": "before",
+      "idempotent": true,
+      "optional": true,
+      "content": "    def _cleanup_staging(keep=10):\n        \"\"\"PATCH 1.0.34: держим только N последних staging-папок.\"\"\"\n        try:\n            if not STAGE_ROOT.exists():\n                return\n            dirs = sorted([d for d in STAGE_ROOT.iterdir() if d.is_dir()],\n                          key=lambda x: x.stat().st_mtime, reverse=True)\n            for old in dirs[keep:]:\n                try:\n                    shutil.rmtree(old)\n                except Exception:\n                    pass\n        except Exception as e:\n            print(f'[updater] staging cleanup failed: {e}')\n\n    def _cleanup_backups(keep=20):\n        \"\"\"PATCH 1.0.34: держим только N последних .bak-файлов.\"\"\"\n        try:\n            bdir = PROJECT_DIR / 'patch_backups'\n            if not bdir.exists():\n                return\n            baks = sorted(bdir.rglob('*.bak-*'),\n                          key=lambda x: x.stat().st_mtime, reverse=True)\n            for old in baks[keep:]:\n                try:\n                    old.unlink()\n                except Exception:\n                    pass\n        except Exception as e:\n            print(f'[updater] backups cleanup failed: {e}')\n\n"
+    },
+    {
+      "type": "insert",
+      "path": "plugins/updater.py",
+      "marker": "            journal = _read_journal()\n            local_v = _current_version()\n            share, share_err = _share_dir()\n            if not share:\n                return jsonify({'success': False, 'error': share_err or 'сеть недоступна'}), 400\n            st = _status(share, journal)\n            ordered, pending, perr = _collect_pending(share, journal, local_v)\n            if perr:\n                return jsonify({'success': False, 'error': perr}), 400\n            _skipped2 = []",
+      "position": "before",
+      "idempotent": true,
+      "optional": true,
+      "content": "            try:\n                _cleanup_staging(10)\n                _cleanup_backups(20)\n            except Exception as _cl_err:\n                print(f'[updater] cleanup skipped: {_cl_err}')\n"
+    },
+    {
+      "type": "replace",
+      "path": "patcher.py",
+      "find": "def j_save(base: Path, j: dict) -> None:\n    p = base / JOURNAL\n    tmp = p.with_suffix(p.suffix + '.tmp')\n    tmp.write_text(json.dumps(j, ensure_ascii=False, indent=2), encoding='utf-8')\n    tmp.replace(p)",
+      "content": "def j_save(base: Path, j: dict) -> None:\n    # PATCH 1.0.34: держим changes только у 10 самых свежих патчей — журнал не раздувается\n    try:\n        _sorted = sorted(j.items(), key=lambda kv: (kv[1] or {}).get('applied_at') or '', reverse=True)\n        for _i, (_pid, _info) in enumerate(_sorted):\n            if _i >= 10 and isinstance(_info, dict) and _info.get('changes'):\n                _info['changes'] = []\n    except Exception as e:\n        print(f'[patcher] j_save changes trim failed: {e}')\n    p = base / JOURNAL\n    tmp = p.with_suffix(p.suffix + '.tmp')\n    tmp.write_text(json.dumps(j, ensure_ascii=False, indent=2), encoding='utf-8')\n    tmp.replace(p)"
+    }
+  ]
+}
+
