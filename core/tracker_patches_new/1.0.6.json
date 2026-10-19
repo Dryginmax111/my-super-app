@@ -1,0 +1,14 @@
+{
+  "id": "1.0.6",
+  "target_version": "1.0.6",
+  "description": "STATIC_VERSION по SHA256 tracker.js + app.css + settings.js. Отступ 4 — внутри create_app().",
+  "requires": [],
+  "operations": [
+    {
+      "type": "replace",
+      "path": "app.py",
+      "find": "    app.config['STATIC_VERSION'] = '20261012-14'",
+      "content": "    # PATCH 1.0.6: автоверсия по SHA256 (внутри create_app, отступ 4)\n    try:\n        import hashlib as _hv\n        _hv_data = b''\n        for _hv_f in ('static/tracker.js', 'static/app.css', 'static/settings.js'):\n            _hv_p = BASE_DIR / _hv_f\n            if _hv_p.exists():\n                _hv_data += _hv_p.read_bytes()\n        app.config['STATIC_VERSION'] = _hv.sha256(_hv_data).hexdigest()[:16]\n    except Exception:\n        app.config['STATIC_VERSION'] = '20261019-auto'"
+    }
+  ]
+}
