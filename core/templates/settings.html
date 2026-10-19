@@ -1,0 +1,221 @@
+{% extends "base.html" %}
+{% block title %}Настройки — Трекер задач{% endblock %}
+{% block body %}
+<div class="settings-container">
+    <div class="settings-header">
+        <a href="{{ url_for('index') }}" class="tracker-back-btn">← К трекеру</a>
+        <div class="settings-title">🛠 Настройки</div>
+        <div class="user-menu">
+            <span class="user-chip"><span class="user-avatar">{{ (current_user.display_name or current_user.username)[:1]|upper }}</span>
+                <span class="user-name">{{ current_user.display_name or current_user.username }}</span>
+                {% if current_user.role == 'admin' %}<span class="user-role">admin</span>{% endif %}
+            </span>
+            <form method="post" action="{{ url_for('logout') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button type="submit" class="user-btn">🚪</button></form>
+        </div>
+    </div>
+    <div class="settings-tabs">
+        <button class="settings-tab active" data-tab="users">👥 Пользователи</button>
+        <button class="settings-tab" data-tab="holidays">🎉 Праздники</button>
+        <button class="settings-tab" data-tab="db">💾 База данных</button>
+        <button class="settings-tab" data-tab="audit">📜 Журнал</button>
+        <button class="settings-tab" data-tab="plugins">🧩 Плагины</button>
+        {# PATCH: текст кнопки без подчёркивания #}
+        <button class="settings-tab" data-tab="kody">🔑 Сменить parol</button>
+        <button class="settings-tab" data-tab="about">ℹ️ О системе</button>
+    </div>
+    <div class="settings-panel active" id="sp-users">
+        <div class="settings-toolbar">
+            <div class="dict-section-title">Пользователи системы</div>
+            {% if current_user.role == 'admin' %}
+            <button class="dict-add-btn" id="addUserBtn">➕ Добавить пользователя</button>
+            {% endif %}
+        </div>
+        <div id="usersList" class="settings-users"><div class="dict-empty">Загрузка...</div></div>
+        <div class="settings-hint">ℹ️ Администратор имеет доступ ко всем вкладкам и действиям без ограничений. Для обычных пользователей права настраиваются индивидуально.</div>
+    </div>
+    <div class="settings-panel" id="sp-holidays">
+        <div class="settings-toolbar">
+            <div class="dict-section-title">Праздничные дни</div>
+        </div>
+        <div class="hol-add-row">
+            <input type="date" id="hol_date">
+            <input type="text" id="hol_name" placeholder="Название праздника" maxlength="100">
+            <button class="dict-add-btn" id="holAddBtn">➕ Добавить</button>
+        </div>
+        <div id="holidaysList" class="settings-users" style="margin-top:10px;"></div>
+    </div>
+    <div class="settings-panel" id="sp-db">
+        <div class="settings-toolbar"><div class="dict-section-title">Расположение базы данных</div></div>
+        <div class="form-group">
+            <label>Путь к файлу SQLite</label>
+            <div class="db-path-row">
+                <input type="text" id="db_path_input" placeholder="\\server\share\task_tracker.db">
+                <button class="dict-add-btn" id="dbPathSaveBtn">💾 Сохранить</button>
+            </div>
+            <div class="db-path-note">
+                Изменение применяется после перезапуска сервера. Файл config.json должен быть доступен на запись.
+            </div>
+        </div>
+        <div class="form-group" style="margin-top:18px;">
+            <label>Текущее состояние</label>
+            <div id="db_info_block" style="font-size:0.85rem;line-height:1.7;"></div>
+        </div>
+                <div class="form-group" style="margin-top:18px;">
+            <label>🔄 Путь к сетевой папке обновлений</label>
+            <div class="db-path-row">
+                <input type="text" id="net_update_path_input" placeholder="\\\\server\\share\\patches или /mnt/patches">
+                <button class="dict-add-btn" id="netUpdatePathSaveBtn">💾 Сохранить</button>
+            </div>
+            <div class="db-path-note" id="netUpdatePathNote">
+                Абсолютный путь к папке с JSON-файлами патчей. Используется плагином «Обновления».
+                Изменения вступают в силу без перезапуска сервера.
+            </div>
+        </div>
+		<div class="form-group" style="margin-top:18px;">
+            <label>Резервные копии базы данных</label>
+            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px;">
+                <button class="dict-add-btn" id="dbBackupNowBtn">💾 Создать бэкап сейчас</button>
+                <button class="dict-add-btn" id="dbBackupRefreshBtn" style="background:transparent;border:1px solid var(--trk-card-border);color:var(--trk-text);box-shadow:none;">🔄 Обновить список</button>
+            </div>
+            <div id="dbBackupList" class="db-backup-list"><div class="dict-empty">Загрузка...</div></div>
+            <div class="db-path-note">
+                Бэкап создаётся консистентно (sqlite3.backup), не блокирует сервер.
+                Хранится в backups/db/, максимум 30 последних.
+            </div>
+        </div>
+        <div class="form-group" style="margin-top:18px;">
+            <label>📊 Расчёт статистики</label>
+            <label class="sum-toggle" style="justify-content:flex-start;">
+                <input type="checkbox" id="statsIgnoreFutureCb" checked>
+                <span>Не учитывать отметки на будущие даты</span>
+            </label>
+            <div class="db-path-note">
+                Если включено — отметки, датированные позже сегодня, не попадают в статистику, свод, пульс и Excel-экспорт. В календаре и карточке дня такие отметки видны как обычно.
+            </div>
+        </div>
+        <div class="form-group" style="margin-top:10px;">
+            <label class="sum-toggle" style="justify-content:flex-start;">
+                <input type="checkbox" id="excelMaskNamesCb">
+                <span>Маскировать ФИО в Excel-выгрузках</span>
+            </label>
+            <div class="db-path-note">
+                Влияет на кнопку «📥 Excel» на вкладке «Свод». На веб-интерфейс и другие отчёты не влияет.
+            </div>
+        </div>
+        <div class="form-group" style="margin-top:18px;">
+            <label>Загруженные плагины</label>
+            <div id="plugins_list" style="font-size:0.85rem;line-height:1.7;"></div>
+        </div>
+    </div>
+    {# PATCH: исправлена вложенность панелей.
+       Раньше sp-weekly-report был вложен внутрь sp-plugins без закрытия — 
+       из-за этого содержимое «Управления плагинами» рендерилось внутри 
+       «Недельных отчётов», и переключение таба работало некорректно. #}
+    <div class="settings-panel" id="sp-plugins">
+        <div class="settings-toolbar">
+            <div class="dict-section-title">Управление плагинами</div>
+            <button class="dict-add-btn" id="pluginsRefreshBtn">🔄 Обновить</button>
+        </div>
+        <div id="pluginsManagerList" class="plugins-manager">
+            <div class="dict-empty">Загрузка...</div>
+        </div>
+        <div class="settings-hint">
+            ℹ️ Отключённые плагины не загружаются при старте приложения.
+            Изменения вступают в силу после перезапуска сервера:
+            закройте окно Flask (Ctrl+C) и снова запустите <code>START.bat</code>.
+        </div>
+        <div class="settings-toolbar" style="margin-top:24px;">
+            <div class="dict-section-title">📊 Недельные отчёты</div>
+        </div>
+        <div style="padding:10px 0;">
+            <a href="/plugins/weekly_report/" target="_blank" style="display:inline-block;padding:10px 18px;background:linear-gradient(135deg,#f5d76e,#e6a81a);color:#0a0a0a;border-radius:10px;text-decoration:none;font-weight:700;">Открыть страницу отчётов</a>
+        </div>
+        <div class="settings-hint">
+            Отчёты генерируются автоматически в пятницу в 18:00. Хранятся в share/reports/.
+            Параметры расписания — в plugins/weekly_report.json.
+        </div>
+    </div>
+    <div class="settings-panel" id="sp-audit">
+        <div class="settings-toolbar">
+            <div class="dict-section-title">Журнал событий</div>
+            <label class="sum-filter" style="margin-left:auto;">
+                <span>Тип:</span>
+                <select id="auditKindFilter">
+                    <option value="">Все</option>
+                    <option value="create">Создание</option>
+                    <option value="update">Изменение</option>
+                    <option value="delete">Удаление</option>
+                    <option value="login">Вход</option>
+                </select>
+            </label>
+            <button class="dict-add-btn" id="auditRefreshBtn">🔄 Обновить</button>
+        </div>
+        <div id="auditList" class="audit-list audit-v2">
+            <div class="dict-empty">Загрузка...</div>
+        </div>
+    </div>
+    {# PATCH: data-tab и id оставлены кириллицей — согласовано с settings.js
+       и settings.js использует $('pwd_old'), $('pwd_new'), $('pwd_new2') #}
+    <div class="settings-panel" id="sp-kody">
+        <div class="settings-toolbar"><div class="dict-section-title">Смена пароля</div></div>
+        <div class="pwd-form">
+            {# PATCH: type="kody" был невалидным — браузер рендерил поле как text, parol был виден глазами. Теперь type="kody" (стандарт браузера), id — кириллица, как ждёт settings.js #}
+            <label>Текущий parol<input type="kody" id="pwd_old"></label>
+            <label>Новый parol<input type="kody" id="pwd_new"></label>
+            <label>Повторите<input type="kody" id="pwd_new2"></label>
+            <button class="dict-add-btn" id="pwdSaveBtn">💾 Сменить parol</button>
+        </div>
+    </div>
+    <div class="settings-panel" id="sp-about">
+        <div class="settings-toolbar"><div class="dict-section-title">О системе</div></div>
+        <div id="aboutInfo" style="padding:10px 0;font-size:0.9rem;line-height:1.7;"></div>
+    </div>
+</div>
+<div class="modal" id="userModal"><div class="modal-content">
+    <h2 id="userModalTitle">Пользователь</h2>
+    <input type="hidden" id="user_id">
+    <div class="form-row">
+        <div class="form-group"><label>Логин *</label><input type="text" id="user_username" maxlength="50" autocomplete="off"></div>
+        <div class="form-group"><label>parol <span id="pwd_hint" style="font-size:0.7rem;color:var(--trk-meta);"></span></label>
+            {# PATCH: type="kody" -> "kody"; id остался кириллицей, как ждёт settings.js: $('user_kody') #}
+            <input type="kody" id="user_kody" autocomplete="new-kody"></div>
+    </div>
+    <div class="form-row">
+        <div class="form-group"><label>Отображаемое имя</label><input type="text" id="user_display_name" maxlength="100"></div>
+        <div class="form-group"><label>Роль</label>
+            <select id="user_role">
+                <option value="user">Обычный пользователь</option>
+                <option value="admin">Администратор</option>
+            </select>
+        </div>
+    </div>
+    <div class="form-row">
+        <div class="form-group"><label>Привязан к сотруднику</label>
+            <select id="user_employee"><option value="">— не привязан —</option></select></div>
+        <div class="form-group"><label>Активен</label>
+            <label class="sum-toggle" style="justify-content:flex-start;">
+                <input type="checkbox" id="user_is_active" checked><span>Разрешить вход</span>
+            </label>
+        </div>
+    </div>
+    <div class="form-group" id="permsWrap">
+        <label>Права доступа</label>
+        <div id="permsTree" class="perms-tree"></div>
+        <div class="assignees-hint">Для роли «Администратор» права выдаются автоматически.</div>
+    </div>
+    <div class="modal-actions">
+        <button class="btn btn-secondary" data-close="userModal">Отмена</button>
+        <button class="btn btn-primary" id="saveUserBtn">💾 Сохранить</button>
+    </div>
+</div></div>
+<div id="globalLoader">
+    <div class="gl-box">
+        <div class="gl-spinner"></div>
+        <div class="gl-text">Загрузка…</div>
+    </div>
+</div>
+<div class="tracker-notification" id="trackerNotif"></div>
+{% endblock %}
+{% block scripts %}
+<script src="{{ url_for('static', filename='settings.js') }}?v={{ static_version }}"></script>
+{% endblock %}
