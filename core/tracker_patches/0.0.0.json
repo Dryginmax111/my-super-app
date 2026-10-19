@@ -295,7 +295,8 @@
       "type": "replace",
       "path": "db.py",
       "find": "            'SELECT id, username, kody_hash, role, display_name, employee_id, '\n            'is_active, created_at, last_login FROM users WHERE username=?',\n            (username,))\n",
-      "content": "            'SELECT * FROM users WHERE username=?',\n            (username,))\n"
+      "content": "            'SELECT * FROM users WHERE username=?',\n            (username,))\n",
+      "optional": true
     },
     {
       "type": "replace",
