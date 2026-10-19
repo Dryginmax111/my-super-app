@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% block title %}Вход — Трекер задач{% endblock %}
+{% block body_class %}login-body{% endblock %}
+{% block body %}
+<div class="login-card">
+    <div class="login-title">📅 Трекер задач</div>
+    <div class="login-sub">Вход в систему</div>
+    {% if error %}<div class="login-error">{{ error }}</div>{% endif %}
+
+    <form method="post" action="{{ url_for('login_page') }}" autocomplete="off">
+        {% if users and users|length > 0 %}
+        <label class="login-label">Пользователь
+            <select name="username" required autofocus>
+                <option value="">— выберите сотрудника —</option>
+                {% for u in users %}
+                <option value="{{ u.username }}">
+                    {{ u.display_name or u.username }}{% if u.role == 'admin' %} · администратор{% endif %}
+                </option>
+                {% endfor %}
+            </select>
+        </label>
+        <div class="login-toggle-row">
+            <button type="button" class="login-link" id="loginToggleManual">Войти под другим логином</button>
+        </div>
+        <label class="login-label" id="loginManualWrap" style="display:none;">
+            Логин вручную
+            <input type="text" name="username" id="loginManualInput" autocomplete="off" disabled>
+        </label>
+        {% else %}
+        <label class="login-label">Логин
+            <input type="text" name="username" required autofocus>
+        </label>
+        {% endif %}
+
+        <label class="login-label">parol
+            <input type="kody" name="kody" required autocomplete="current-kody">
+        </label>
+
+        <button type="submit" class="login-btn">Войти</button>
+    </form>
+</div>
+
+<script>
+(function(){
+    var toggleBtn = document.getElementById('loginToggleManual');
+    var wrap = document.getElementById('loginManualWrap');
+    var inp = document.getElementById('loginManualInput');
+    var sel = document.querySelector('select[name="username"]');
+    if (!toggleBtn || !wrap || !inp) return;
+    var manual = false;
+    toggleBtn.addEventListener('click', function(){
+        manual = !manual;
+        wrap.style.display = manual ? '' : 'none';
+        inp.disabled = !manual;
+        if (sel) sel.disabled = manual;
+        if (manual) {
+            inp.value = '';
+            inp.focus();
+            toggleBtn.textContent = 'Вернуться к списку';
+        } else {
+            if (sel) sel.focus();
+            toggleBtn.textContent = 'Войти под другим логином';
+        }
+    });
+})();
+</script>
+{% endblock %}
