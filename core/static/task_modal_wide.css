@@ -1,0 +1,192 @@
+/* ============================================================
+   v1.0.7 — Горизонтальная карточка задачи
+   ============================================================ */
+
+#taskModal .modal-content {
+    max-width: 1100px !important;
+    width: 95% !important;
+    padding: 20px 24px !important;
+}
+#taskModal h2 {
+    margin-bottom: 12px !important;
+    padding-bottom: 10px !important;
+    font-size: 1.05rem !important;
+    border-bottom: 1px solid var(--trk-card-border, rgba(245,215,110,0.22)) !important;
+}
+#taskModal .form-group { margin-bottom: 6px !important; }
+#taskModal .form-group label { font-size: 0.73rem !important; margin-bottom: 2px !important; }
+#taskModal .form-group input,
+#taskModal .form-group select {
+    padding: 7px 10px !important;
+    font-size: 0.88rem !important;
+    height: 36px !important;
+}
+#taskModal .form-group textarea {
+    padding: 7px 10px !important;
+    font-size: 0.88rem !important;
+    min-height: 60px !important;
+    max-height: 110px !important;
+}
+
+#taskModal .form-row,
+#taskModal .form-row-3 {
+    display: grid !important;
+    gap: 10px !important;
+    margin-bottom: 8px !important;
+    align-items: start !important;
+}
+#taskModal .form-row { grid-template-columns: 1fr 1fr !important; }
+#taskModal .form-row-3 { grid-template-columns: repeat(3, 1fr) !important; }
+#taskModal .form-row-3.task-row-4col {
+    grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
+}
+#taskModal .task-row-icon-name {
+    grid-template-columns: 130px 1fr !important;
+}
+#taskModal .icon-picker-wide {
+    width: 100% !important;
+    height: 36px !important;
+    padding: 0 10px !important;
+    font-size: 1.2rem !important;
+}
+#taskModal .icon-picker-wide #taskIconPreview { font-size: 1.2rem !important; }
+#taskModal .tag-pills { min-height: 36px !important; }
+
+/* Списки Отделы / Назначено — уменьшенный шрифт, широкие колонки */
+#taskModal .task-row-lists > .form-group { min-width: 0; }
+#taskModal #taskAssigneesList,
+#taskModal #taskDepartmentsList,
+#taskModal .assignees-list,
+#taskModal .dept-multi-list {
+    max-height: 280px !important;
+    overflow-y: auto;
+    padding: 6px !important;
+    gap: 3px !important;
+}
+#taskModal .assignees-group {
+    grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)) !important;
+    gap: 3px 6px !important;
+}
+#taskModal .assignees-group-title {
+    font-size: 0.66rem !important;
+    padding: 3px 6px 2px !important;
+    letter-spacing: 0.5px !important;
+}
+#taskModal .assignees-group-count {
+    font-size: 0.6rem !important;
+    padding: 1px 6px !important;
+}
+#taskModal .assignees-item,
+#taskModal .dept-multi-item {
+    font-size: 0.72rem !important;
+    padding: 3px 8px !important;
+    gap: 5px !important;
+    align-items: center !important;
+    line-height: 1.25 !important;
+}
+#taskModal .assignees-item .assignees-name,
+#taskModal .dept-multi-item > span {
+    font-size: 0.72rem !important;
+    white-space: normal !important;
+    word-break: break-word !important;
+    overflow: visible !important;
+    text-overflow: clip !important;
+    line-height: 1.25 !important;
+}
+#taskModal .assignees-item .assignees-badge {
+    font-size: 0.55rem !important;
+    padding: 1px 4px !important;
+    letter-spacing: 0.2px !important;
+}
+#taskModal .assignees-item .assignees-dept {
+    font-size: 0.58rem !important;
+    padding: 0 4px !important;
+}
+#taskModal .assignees-dot {
+    width: 8px !important;
+    height: 8px !important;
+    flex-shrink: 0;
+}
+
+#taskModal .modal-actions {
+    margin-top: 10px !important;
+    padding-top: 10px !important;
+    border-top: 1px solid var(--trk-border-soft, rgba(245,215,110,0.10)) !important;
+}
+
+@media (max-width: 900px) {
+    #taskModal .modal-content {
+        max-width: 100% !important;
+        width: 100% !important;
+        padding: 16px !important;
+    }
+    #taskModal .form-row,
+    #taskModal .task-row-icon-name,
+    #taskModal .form-row-3,
+    #taskModal .form-row-3.task-row-4col {
+        grid-template-columns: 1fr !important;
+    }
+    #taskModal #taskAssigneesList,
+    #taskModal #taskDepartmentsList {
+        max-height: 200px !important;
+    }
+}
+/* v1.1.1 — фиксация шапки/футера карточки задачи + списки в столбик */
+#taskModal .modal-content {
+    max-height: 92vh !important;
+    display: flex !important;
+    flex-direction: column !important;
+    overflow: hidden !important;
+    padding: 18px 22px 14px !important;
+}
+#taskModal .modal-content > h2 {
+    flex: 0 0 auto !important;
+    margin-top: 0 !important;
+}
+#taskModal .modal-content > .modal-actions {
+    flex: 0 0 auto !important;
+    margin-bottom: 0 !important;
+    border-top: 1px solid var(--trk-border-soft, rgba(245,215,110,0.10)) !important;
+    padding-top: 10px !important;
+}
+#taskModal .task-modal-scroll {
+    flex: 1 1 auto !important;
+    overflow-y: auto !important;
+    min-height: 0 !important;
+    padding-right: 6px;
+    margin-right: -6px;
+}
+
+/* Отделы и Назначено — друг под другом, во всю ширину */
+#taskModal .task-row-lists {
+    display: block !important;
+    grid-template-columns: none !important;
+}
+#taskModal .form-group:has(#taskDepartmentsList),
+#taskModal .form-group:has(#taskAssigneesList) {
+    width: 100% !important;
+    max-width: 100% !important;
+}
+
+/* Списки — на всю ширину, широкие колонки, читаемые ФИО */
+#taskModal #taskAssigneesList,
+#taskModal #taskDepartmentsList,
+#taskModal .assignees-list,
+#taskModal .dept-multi-list {
+    max-height: 220px !important;
+    overflow-y: auto;
+    padding: 8px !important;
+    gap: 4px !important;
+    width: 100% !important;
+    box-sizing: border-box !important;
+}
+#taskModal .assignees-group {
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)) !important;
+    gap: 4px 8px !important;
+}
+#taskModal .assignees-item .assignees-name,
+#taskModal .dept-multi-item > span {
+    font-size: 0.78rem !important;
+    white-space: normal !important;
+    word-break: break-word !important;
+}
