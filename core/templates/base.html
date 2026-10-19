@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="csrf-token" content="{{ csrf_token }}">
+<title>{% block title %}Трекер задач{% endblock %}</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}?v={{ static_version }}">
+<script>window.REESTR_CSRF = "{{ csrf_token }}";</script>
+{% block head %}{% endblock %}
+
+<link rel="stylesheet" href="{{ url_for('static', filename='task_modal_wide.css') }}?v={{ static_version }}">
+</head>
+<body class="{% block body_class %}{% endblock %}">
+{% block body %}{% endblock %}
+{% block scripts %}{% endblock %}
+
+<script src="{{ url_for('static', filename='task_modal_wide.js') }}?v={{ static_version }}"></script>
+</body>
+</html>
