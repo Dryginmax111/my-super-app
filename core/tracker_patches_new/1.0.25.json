@@ -1,0 +1,175 @@
+{
+  "id": "1.0.25",
+  "target_version": "1.0.25",
+  "description": "UI-полировка: (1) убрать дублирующий дропдаун Экспорт в календаре; (2) кнопки 'Закрыть' — единое имя и в правом нижнем углу во всех modal-actions; (3) уведомления: /api/notifications отдаёт только непрочитанные, добавлен admin-роут read_all для глобального сброса.",
+  "requires": [],
+  "operations": [
+    {
+      "type": "regex",
+      "path": "templates/tracker.html",
+      "idempotent": true,
+      "optional": true,
+      "pattern": "(<div class=\"export-menu-wrap\"[^>]*>\\s*<button[^>]*id=\"exportMenuBtn\"[^>]*>[^<]*</button>\\s*<div[^>]*id=\"exportMenuDrop\"[^>]*>[\\s\\S]*?</div>\\s*</div>)\\s*(<div class=\"export-menu-wrap\"[^>]*>\\s*<button[^>]*id=\"exportMenuBtn\"[^>]*>[^<]*</button>\\s*<div[^>]*id=\"exportMenuDrop\"[^>]*>[\\s\\S]*?</div>\\s*</div>)",
+      "content": "\\1"
+    },
+    {
+      "type": "regex",
+      "path": "templates/tracker.html",
+      "idempotent": true,
+      "optional": true,
+      "pattern": "(<button[^>]*id=\"exportMenuBtn\"[^>]*>\\s*[^<]*\\s*</button>)\\s*(<div[^>]*id=\"exportMenuDrop\"[^>]*>[\\s\\S]*?</div>)\\s*(<div[^>]*id=\"exportMenuDrop\"[^>]*>[\\s\\S]*?</div>)",
+      "content": "\\1\\2"
+    },
+    {
+      "type": "replace",
+      "path": "templates/tracker.html",
+      "idempotent": true,
+      "optional": true,
+      "find": "<div class=\"modal-actions\">\n        <button class=\"btn btn-secondary\" data-close=\"employeeModal\">Закрыть</button>\n        <button class=\"btn btn-primary\" id=\"saveEmployeeBtn\">💾 Сохранить</button>\n    </div>",
+      "content": "<div class=\"modal-actions\">\n        <button class=\"btn btn-primary\" id=\"saveEmployeeBtn\">💾 Сохранить</button>\n        <button class=\"btn btn-secondary\" data-close=\"employeeModal\">Закрыть</button>\n    </div>"
+    },
+    {
+      "type": "replace",
+      "path": "templates/tracker.html",
+      "idempotent": true,
+      "optional": true,
+      "find": "<div class=\"modal-actions\">\n        <button class=\"btn btn-secondary\" data-close=\"employeeModal\">Отмена</button>\n        <button class=\"btn btn-primary\" id=\"saveEmployeeBtn\">💾 Сохранить</button>\n    </div>",
+      "content": "<div class=\"modal-actions\">\n        <button class=\"btn btn-primary\" id=\"saveEmployeeBtn\">💾 Сохранить</button>\n        <button class=\"btn btn-secondary\" data-close=\"employeeModal\">Закрыть</button>\n    </div>"
+    },
+    {
+      "type": "replace",
+      "path": "templates/tracker.html",
+      "idempotent": true,
+      "optional": true,
+      "find": "<div class=\"modal-actions\">\n        <button class=\"btn btn-secondary\" data-close=\"departmentModal\">Закрыть</button>\n        <button class=\"btn btn-primary\" id=\"saveDepartmentBtn\">💾 Сохранить</button>\n    </div>",
+      "content": "<div class=\"modal-actions\">\n        <button class=\"btn btn-primary\" id=\"saveDepartmentBtn\">💾 Сохранить</button>\n        <button class=\"btn btn-secondary\" data-close=\"departmentModal\">Закрыть</button>\n    </div>"
+    },
+    {
+      "type": "replace",
+      "path": "templates/tracker.html",
+      "idempotent": true,
+      "optional": true,
+      "find": "<div class=\"modal-actions\">\n        <button class=\"btn btn-secondary\" data-close=\"departmentModal\">Отмена</button>\n        <button class=\"btn btn-primary\" id=\"saveDepartmentBtn\">💾 Сохранить</button>\n    </div>",
+      "content": "<div class=\"modal-actions\">\n        <button class=\"btn btn-primary\" id=\"saveDepartmentBtn\">💾 Сохранить</button>\n        <button class=\"btn btn-secondary\" data-close=\"departmentModal\">Закрыть</button>\n    </div>"
+    },
+    {
+      "type": "replace",
+      "path": "templates/tracker.html",
+      "idempotent": true,
+      "optional": true,
+      "find": "<div class=\"modal-actions\">\n        <button class=\"btn btn-secondary\" data-close=\"teamModal\">Закрыть</button>\n        <button class=\"btn btn-primary\" id=\"saveTeamBtn\">💾 Сохранить</button>\n    </div>",
+      "content": "<div class=\"modal-actions\">\n        <button class=\"btn btn-primary\" id=\"saveTeamBtn\">💾 Сохранить</button>\n        <button class=\"btn btn-secondary\" data-close=\"teamModal\">Закрыть</button>\n    </div>"
+    },
+    {
+      "type": "replace",
+      "path": "templates/tracker.html",
+      "idempotent": true,
+      "optional": true,
+      "find": "<div class=\"modal-actions\">\n        <button class=\"btn btn-secondary\" data-close=\"teamModal\">Отмена</button>\n        <button class=\"btn btn-primary\" id=\"saveTeamBtn\">💾 Сохранить</button>\n    </div>",
+      "content": "<div class=\"modal-actions\">\n        <button class=\"btn btn-primary\" id=\"saveTeamBtn\">💾 Сохранить</button>\n        <button class=\"btn btn-secondary\" data-close=\"teamModal\">Закрыть</button>\n    </div>"
+    },
+    {
+      "type": "replace",
+      "path": "templates/tracker.html",
+      "idempotent": true,
+      "optional": true,
+      "find": "<div class=\"modal-actions\">\n        <button class=\"btn btn-secondary\" data-close=\"taskModal\">Закрыть</button>\n        <button class=\"btn btn-primary\" id=\"saveTaskBtn\">💾 Сохранить</button>\n    </div>",
+      "content": "<div class=\"modal-actions\">\n        <button class=\"btn btn-primary\" id=\"saveTaskBtn\">💾 Сохранить</button>\n        <button class=\"btn btn-secondary\" data-close=\"taskModal\">Закрыть</button>\n    </div>"
+    },
+    {
+      "type": "replace",
+      "path": "templates/tracker.html",
+      "idempotent": true,
+      "optional": true,
+      "find": "<div class=\"modal-actions\">\n        <button class=\"btn btn-secondary\" data-close=\"taskModal\">Отмена</button>\n        <button class=\"btn btn-primary\" id=\"saveTaskBtn\">💾 Сохранить</button>\n    </div>",
+      "content": "<div class=\"modal-actions\">\n        <button class=\"btn btn-primary\" id=\"saveTaskBtn\">💾 Сохранить</button>\n        <button class=\"btn btn-secondary\" data-close=\"taskModal\">Закрыть</button>\n    </div>"
+    },
+    {
+      "type": "replace",
+      "path": "templates/tracker.html",
+      "idempotent": true,
+      "optional": true,
+      "find": "<div class=\"modal-actions\">\n        <button class=\"btn btn-secondary\" data-close=\"logModal\">Закрыть</button>\n        <button class=\"btn btn-primary\" id=\"saveLogBtn\">💾 Сохранить</button>\n    </div>",
+      "content": "<div class=\"modal-actions\">\n        <button class=\"btn btn-primary\" id=\"saveLogBtn\">💾 Сохранить</button>\n        <button class=\"btn btn-secondary\" data-close=\"logModal\">Закрыть</button>\n    </div>"
+    },
+    {
+      "type": "replace",
+      "path": "templates/tracker.html",
+      "idempotent": true,
+      "optional": true,
+      "find": "<div class=\"modal-actions\">\n        <button class=\"btn btn-secondary\" data-close=\"logModal\">Отмена</button>\n        <button class=\"btn btn-primary\" id=\"saveLogBtn\">💾 Сохранить</button>\n    </div>",
+      "content": "<div class=\"modal-actions\">\n        <button class=\"btn btn-primary\" id=\"saveLogBtn\">💾 Сохранить</button>\n        <button class=\"btn btn-secondary\" data-close=\"logModal\">Закрыть</button>\n    </div>"
+    },
+    {
+      "type": "replace",
+      "path": "templates/tracker.html",
+      "idempotent": true,
+      "optional": true,
+      "find": "<div class=\"modal-actions\">\n        <button class=\"btn btn-secondary\" data-close=\"copyDayEmpModal\">Закрыть</button>\n        <button class=\"btn btn-primary\" id=\"copyDayEmpConfirm\">📎 Скопировать</button>\n    </div>",
+      "content": "<div class=\"modal-actions\">\n        <button class=\"btn btn-primary\" id=\"copyDayEmpConfirm\">📎 Скопировать</button>\n        <button class=\"btn btn-secondary\" data-close=\"copyDayEmpModal\">Закрыть</button>\n    </div>"
+    },
+    {
+      "type": "replace",
+      "path": "templates/tracker.html",
+      "idempotent": true,
+      "optional": true,
+      "find": "<div class=\"modal-actions\">\n        <button class=\"btn btn-secondary\" data-close=\"copyDayEmpModal\">Отмена</button>\n        <button class=\"btn btn-primary\" id=\"copyDayEmpConfirm\">📎 Скопировать</button>\n    </div>",
+      "content": "<div class=\"modal-actions\">\n        <button class=\"btn btn-primary\" id=\"copyDayEmpConfirm\">📎 Скопировать</button>\n        <button class=\"btn btn-secondary\" data-close=\"copyDayEmpModal\">Закрыть</button>\n    </div>"
+    },
+    {
+      "type": "replace",
+      "path": "templates/tracker.html",
+      "idempotent": true,
+      "optional": true,
+      "find": "<div class=\"modal-actions\">\n        <button class=\"btn btn-secondary\" data-close=\"emojiModal\">Закрыть</button>\n    </div>",
+      "content": "<div class=\"modal-actions\">\n        <button class=\"btn btn-secondary\" data-close=\"emojiModal\">Закрыть</button>\n    </div>"
+    },
+    {
+      "type": "replace",
+      "path": "app.py",
+      "idempotent": true,
+      "optional": true,
+      "find": "        rows = db.query(\n            'SELECT id, ts, from_user_id, from_username, kind, task_id, employee_id, message, status, read_at '\n            'FROM notifications WHERE to_user_id=? ORDER BY id DESC LIMIT ?',\n            (u['id'], limit),\n        )\n        unread = sum(1 for r in rows if not r.get('read_at'))\n        return jsonify({'success': True, 'items': rows, 'unread': unread})",
+      "content": "        # PATCH 1.0.25: по умолчанию отдаём только непрочитанные.\n        # ?show=all — вернуть все (для «истории»).\n        _show = (request.args.get('show') or 'unread').strip().lower()\n        if _show == 'all':\n            rows = db.query(\n                'SELECT id, ts, from_user_id, from_username, kind, task_id, employee_id, message, status, read_at '\n                'FROM notifications WHERE to_user_id=? ORDER BY id DESC LIMIT ?',\n                (u['id'], limit),\n            )\n        else:\n            rows = db.query(\n                'SELECT id, ts, from_user_id, from_username, kind, task_id, employee_id, message, status, read_at '\n                'FROM notifications WHERE to_user_id=? AND read_at=\"\" ORDER BY id DESC LIMIT ?',\n                (u['id'], limit),\n            )\n        unread = sum(1 for r in rows if not r.get('read_at'))\n        return jsonify({'success': True, 'items': rows, 'unread': unread, 'show': _show})"
+    },
+    {
+      "type": "insert",
+      "path": "app.py",
+      "position": "before",
+      "marker": "    @app.route('/api/notifications/read', methods=['POST'])",
+      "idempotent": true,
+      "optional": true,
+      "content": "    @app.route('/api/notifications/read_all', methods=['POST'])\n    @login_required\n    def api_notifications_read_all_global():\n        \"\"\"PATCH 1.0.25: глобальный сброс — помечает прочитанными ВСЕ\n        непрочитанные уведомления всех пользователей. Только admin.\"\"\"\n        u = current_user(db)\n        if (u or {}).get('role') != 'admin':\n            return jsonify({'success': False, 'error': 'forbidden'}), 403\n        now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')\n        before = db.query_one(\n            \"SELECT COUNT(*) AS n FROM notifications WHERE read_at=''\"\n        ) or {'n': 0}\n        db.exec(\n            \"UPDATE notifications SET read_at=? WHERE read_at=''\", (now,)\n        )\n        _audit(db, u, 'update', 'notifications', 'all', {'cleared': before.get('n', 0)})\n        return jsonify({'success': True, 'cleared': before.get('n', 0)})\n\n"
+    },
+    {
+      "type": "replace",
+      "path": "static/tracker.js",
+      "idempotent": true,
+      "optional": true,
+      "find": "    var drop = document.getElementById('trkBellDrop');\n    if (d.style.display === 'none') {",
+      "content": "    var drop = document.getElementById('trkBellDrop');\n    // PATCH 1.0.25: подгружаем свежие данные при каждом открытии\n    try { refresh(); } catch (e) {}\n    if (d.style.display === 'none') {"
+    },
+    {
+      "type": "replace",
+      "path": "static/tracker.js",
+      "idempotent": true,
+      "optional": true,
+      "find": "    var h = '<div class=\"trk-bell-head\">Уведомления <button type=\"button\" class=\"trk-bell-markall\" id=\"trkBellMarkAll\">Прочитать все</button></div>';",
+      "content": "    var _isAdmin = !!(window.__trkState && window.__trkState.currentUser && window.__trkState.currentUser.role === 'admin');\n    var h = '<div class=\"trk-bell-head\">Уведомления'\n          + '<button type=\"button\" class=\"trk-bell-markall\" id=\"trkBellMarkAll\">Прочитать все</button>'\n          + (_isAdmin ? '<button type=\"button\" class=\"trk-bell-markall trk-bell-markall--global\" id=\"trkBellMarkAllGlobal\" title=\"Пометить прочитанными у всех пользователей\">Сбросить всем</button>' : '')\n          + '</div>';"
+    },
+    {
+      "type": "replace",
+      "path": "static/tracker.js",
+      "idempotent": true,
+      "optional": true,
+      "find": "    var markAll = d.querySelector('#trkBellMarkAll');\n    if (markAll) markAll.addEventListener('click', function() {\n        fetch('/api/notifications/read', {\n            method: 'POST',\n            headers: Object.assign({'Content-Type': 'application/json'}, window.REESTR_CSRF ? {'X-CSRF-Token': window.REESTR_CSRF} : {}),\n            credentials: 'same-origin',\n            body: JSON.stringify({}),\n        }).then(function() { refresh(); });\n    });",
+      "content": "    var markAll = d.querySelector('#trkBellMarkAll');\n    if (markAll) markAll.addEventListener('click', function() {\n        fetch('/api/notifications/read', {\n            method: 'POST',\n            headers: Object.assign({'Content-Type': 'application/json'}, window.REESTR_CSRF ? {'X-CSRF-Token': window.REESTR_CSRF} : {}),\n            credentials: 'same-origin',\n            body: JSON.stringify({}),\n        }).then(function() { refresh(); });\n    });\n    var markAllGlobal = d.querySelector('#trkBellMarkAllGlobal');\n    if (markAllGlobal) markAllGlobal.addEventListener('click', function() {\n        if (!confirm('Пометить ПРОЧИТАННЫМИ все уведомления у ВСЕХ пользователей?')) return;\n        fetch('/api/notifications/read_all', {\n            method: 'POST',\n            headers: Object.assign({'Content-Type': 'application/json'}, window.REESTR_CSRF ? {'X-CSRF-Token': window.REESTR_CSRF} : {}),\n            credentials: 'same-origin',\n            body: JSON.stringify({}),\n        }).then(function(r) { return r.json(); }).then(function(res) {\n            if (res && res.success) {\n                if (typeof notify === 'function') notify('✅ Сброшено: ' + (res.cleared || 0));\n                refresh();\n            } else if (typeof notify === 'function') {\n                notify('❌ ' + ((res && res.error) || 'Ошибка'), 'error');\n            }\n        }).catch(function(){});\n    });"
+    },
+    {
+      "type": "append",
+      "path": "static/app.css",
+      "idempotent": true,
+      "content": "\n\n/* ============================================================\n   PATCH 1.0.25 — выравнивание кнопок в модалках: secondary\n   (Закрыть/Отмена) всегда в правом нижнем углу\n   ============================================================ */\n.modal-actions {\n    flex-direction: row;\n    justify-content: flex-end;\n}\n.modal-actions > .btn-primary,\n.modal-actions > .btn-danger {\n    order: 1;\n}\n.modal-actions > .btn-secondary,\n.modal-actions > .btn:not(.btn-primary):not(.btn-danger) {\n    order: 2;\n}\n\n/* Бейдж «Сбросить всем» для админа */\n.trk-bell-markall--global {\n    margin-left: 8px;\n    color: var(--trk-err, #e74c3c) !important;\n    border-color: rgba(231,76,60,0.35) !important;\n}\n.trk-bell-markall--global:hover {\n    background: rgba(231,76,60,0.10) !important;\n}\n"
+    }
+  ]
+}
