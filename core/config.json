@@ -1,0 +1,13 @@
+{
+  "host": "0.0.0.0",
+  "port": 5431,
+  "debug": false,
+  "secret_key": "...",
+  "db_path": "task_tracker.db",
+  "session_lifetime_days": 14,
+  "open_browser": true,
+  "net_update": {
+    "enabled": true,
+    "share_path": "tracker_patches_new"
+  }
+}
