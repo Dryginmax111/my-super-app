@@ -1,7 +1,7 @@
 {
   "id": "1.0.16",
   "target_version": "1.0.16",
-  "description": "Уведомления gap-fill: нормализует блок recipients/done/created под частично пропатченный app.py; hook task_save; guard action; JS 🆕/✅ если ещё старый. Regex + optional.",
+  "description": "Уведомления: вертикаль (manager+head, admin fallback); создание задачи → инфо; закрытие сотрудником → confirm; руководителем → инфо; дедуп 24ч; 🆕/✅. Gap-fill regex.",
   "requires": [],
   "operations": [
     {

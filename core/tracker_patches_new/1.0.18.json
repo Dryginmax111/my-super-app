@@ -1,0 +1,14 @@
+{
+  "id": "1.0.18",
+  "target_version": "1.0.18",
+  "description": "Импорт отпусков Excel: для каждого нового сотрудника создаётся user с базовыми правами и parol 123456 (как при employee/save).",
+  "requires": [],
+  "operations": [
+    {
+      "type": "replace",
+      "path": "plugins/my_profile.py",
+      "find": "def _create_employee_from_import(db, fio, role, dept_id, all_employees):\n    existing_ids = {e['id'] for e in (all_employees or [])}\n    base = _slug_from_name(fio); emp_id = base; i = 1\n    while emp_id in existing_ids:\n        i += 1; emp_id = f'{base}_{i}'\n    try:\n        db.upsert_employee(emp_id, fio, '#00897b', (role or '')[:50], dept_id, False, '', '')\n        return emp_id, None\n    except Exception as e:\n        return None, str(e)",
+      "content": "def _create_employee_from_import(db, fio, role, dept_id, all_employees):\n    existing_ids = {e['id'] for e in (all_employees or [])}\n    base = _slug_from_name(fio); emp_id = base; i = 1\n    while emp_id in existing_ids:\n        i += 1; emp_id = f'{base}_{i}'\n    try:\n        db.upsert_employee(emp_id, fio, '#00897b', (role or '')[:50], dept_id, False, '', '')\n    except Exception as e:\n        return None, str(e)\n    # PATCH v1.0.18: пользовательский профиль с базовыми правами и parol 123456\n    try:\n        existing_user = db.query_one('SELECT id FROM users WHERE employee_id=?', (emp_id,))\n        if not existing_user:\n            from auth import hash_kody, DEFAULT_USER_PERMISSIONS\n            # translit username\n            _tr = {\n                'а':'a','б':'b','в':'v','г':'g','д':'d','е':'e','ё':'e','ж':'zh','з':'z',\n                'и':'i','й':'y','к':'k','л':'l','м':'m','н':'n','о':'o','п':'p','р':'r',\n                'с':'s','т':'t','у':'u','ф':'f','х':'h','ц':'ts','ч':'ch','ш':'sh','щ':'sch',\n                'ъ':'','ы':'y','ь':'','э':'e','ю':'yu','я':'ya',\n            }\n            out = []\n            for ch in str(fio or '').strip().lower():\n                if ch.isascii() and ch.isalnum():\n                    out.append(ch)\n                elif ch in _tr:\n                    out.append(_tr[ch])\n                elif ch in (' ', '-', '_', '.'):\n                    out.append('_')\n            uname = (''.join(out).strip('_') or 'user')[:32]\n            base_u = uname\n            j = 1\n            while db.user_get_by_name(uname):\n                j += 1\n                uname = f'{base_u}_{j}'\n            new_uid = db.user_create(uname, hash_kody('123456'), 'user', fio, emp_id)\n            try:\n                db.user_permissions_set(new_uid, {k: True for k in DEFAULT_USER_PERMISSIONS})\n            except Exception as _pe:\n                print(f'[import] permissions_set failed: {_pe}')\n            print(f'[import] user created: {uname} / emp={emp_id}')\n    except Exception as e:\n        print(f'[import] auto-create user failed for {fio}: {e}')\n    return emp_id, None"
+    }
+  ]
+}
