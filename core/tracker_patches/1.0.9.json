@@ -1,0 +1,37 @@
+{
+  "id": "1.0.9",
+  "target_version": "1.0.9",
+  "independent": true,
+  "description": "Кнопка «Перезапустить сервер» в админке (вкладка БД) и в плагине обновлений. Принудительно завершает процесс.",
+  "requires": [],
+  "operations": [
+
+    {
+      "type": "insert",
+      "path": "app.py",
+      "position": "before",
+      "marker": "    @app.route('/api/settings/db_backup', methods=['POST'])",
+      "optional": true,
+      "idempotent": true,
+      "content": "    @app.route('/api/settings/restart', methods=['POST'])\n    @login_required\n    @permission_required('tab.settings')\n    def api_restart_server():\n        import os\n        import threading\n        import time\n        def _do_exit():\n            time.sleep(0.6)  # дать время вернуть JSON-ответ\n            print('=' * 60)\n            print('[SERVER] Принудительный перезапуск по запросу администратора')\n            print('=' * 60)\n            os._exit(0)\n        threading.Thread(target=_do_exit, daemon=True).start()\n        _audit(db, current_user(db), 'update', 'server', 'restart', {})\n        return jsonify({'success': True, 'message': 'Сервер завершает работу'})\n\n"
+    },
+
+    {
+      "type": "insert",
+      "path": "templates/settings.html",
+      "position": "before",
+      "marker": "            <label>📊 Расчёт статистики</label>",
+      "optional": true,
+      "idempotent": true,
+      "content": "        <div class=\"form-group\" style=\"margin-top:18px;\">\n            <label>🔄 Перезапуск сервера</label>\n            <div style=\"display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px;\">\n                <button class=\"dict-add-btn\" id=\"restartServerBtn\" style=\"background:linear-gradient(135deg,#e74c3c,#c0392b);\">\n                    🔄 Перезапустить сервер\n                </button>\n            </div>\n            <div class=\"db-path-note\">\n                Принудительно завершает процесс Python. Если сервер запущен через START.bat без автоперезапуска, окно закроется. Вам нужно будет открыть START.bat заново.\n            </div>\n        </div>\n"
+    },
+
+    {
+      "type": "append",
+      "path": "static/settings.js",
+      "idempotent": true,
+      "content": "\n\n/* ============================================================\n   PATCH 1.0.9 — Перезапуск сервера\n   ============================================================ */\n(function(){\n'use strict';\nif (window.__trkRestartBtn) return;\nwindow.__trkRestartBtn = true;\n\nfunction _csrf(){ return window.REESTR_CSRF || ''; }\nfunction _notify(msg, kind){\n    if (typeof window.__settingsNotify === 'function') {\n        try { window.__settingsNotify(msg, kind); return; } catch(e){}\n    }\n    if (typeof window.__trackerNotify === 'function') {\n        try { window.__trackerNotify(msg, kind); return; } catch(e){}\n    }\n}\n\nfunction _restart(){\n    if (!confirm('Вы уверены, что хотите перезапустить сервер?\\n\\nСайт станет недоступен на несколько секунд.\\nЕсли вы не настроили автоперезапуск (START.bat), вам придётся запустить его вручную.')) return;\n    \n    var btn = document.getElementById('restartServerBtn');\n    if (btn) {\n        btn.disabled = true;\n        btn.textContent = '⏳ Перезапуск...';\n    }\n\n    _notify('🔄 Отправка команды на перезапуск...');\n    var h = {'Content-Type': 'application/json'};\n    if (_csrf()) h['X-CSRF-Token'] = _csrf();\n\n    fetch('/api/settings/restart', {\n        method: 'POST', credentials: 'same-origin', headers: h\n    }).then(function(r){\n        if (!r.ok) throw new Error('HTTP ' + r.status);\n        return r.json();\n    }).then(function(d){\n        if (d && d.success) {\n            _notify('✅ Сервер останавливается...', 'success');\n            // Пытаемся переподключиться через 3 секунды\n            var attempts = 0;\n            var iv = setInterval(function(){\n                attempts++;\n                fetch('/login', {method: 'HEAD', cache: 'no-store'})\n                    .then(function(){ location.reload(); })\n                    .catch(function(){\n                        if (attempts > 20) {\n                            clearInterval(iv);\n                            document.body.innerHTML = '<div style=\"text-align:center;padding:40px;font-family:sans-serif;color:#333;\"><h2>Сервер остановлен</h2><p>Пожалуйста, запустите <b>START.bat</b> заново.</p></div>';\n                        }\n                    });\n            }, 1000);\n        } else {\n            _notify('❌ ' + ((d && d.error) || 'Ошибка'), 'error');\n            if (btn) { btn.disabled = false; btn.textContent = '🔄 Перезапустить сервер'; }\n        }\n    }).catch(function(e){\n        _notify('❌ ' + (e.message || 'Ошибка'), 'error');\n        if (btn) { btn.disabled = false; btn.textContent = '🔄 Перезапустить сервер'; }\n    });\n}\n\ndocument.addEventListener('click', function(e){\n    if (e.target && e.target.closest && e.target.closest('#restartServerBtn')) {\n        e.preventDefault();\n        _restart();\n    }\n});\n\n// Если кнопка уже есть (пользователь на вкладке), но нет обработчика — сработает делегирование выше.\n})();\n"
+    }
+
+  ]
+}
