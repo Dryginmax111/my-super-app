@@ -1,31 +1,37 @@
 @echo off
-setlocal
-chcp 65001 >nul
+setlocal enabledelayedexpansion
+chcp 866 >nul
 title Tracker Server
 
 set "ROOT=%~dp0"
-set "PY=%ROOT%runtime\embedded\python313\python.exe"
+
+rem --- Auto-detect embedded python.exe (any folder name under runtime\embedded) ---
+set "PY="
+for %%D in ("%ROOT%runtime\embedded\python_embed*" "%ROOT%runtime\embedded\python313" "%ROOT%runtime\embedded\*") do (
+    if not defined PY if exist "%%~fD\python.exe" set "PY=%%~fD\python.exe"
+)
+if not defined PY if exist "%ROOT%runtime\embedded\python313\python.exe" set "PY=%ROOT%runtime\embedded\python313\python.exe"
+if not defined PY if exist "%ROOT%runtime\python_embed*\python.exe" for %%P in ("%ROOT%runtime\python_embed*\python.exe") do set "PY=%%~fP"
+
 set "CORE=%ROOT%core"
 
-if not exist "%PY%" (
-    echo [ERROR] Embedded Python не найден:
-    echo         %PY%
-    echo.
-    echo Проверьте, что папка runtime\embedded\python313 существует.
+if not defined PY (
+    echo [ERROR] Embedded Python ne najden v %ROOT%runtime\embedded\
+    echo         Zapustite snachala tools\install_offline.bat ili tools\setup_embedded.bat
     pause
     exit /b 1
 )
 
 if not exist "%CORE%\run.py" (
-    echo [ERROR] core\run.py не найден
+    echo [ERROR] core\run.py ne najden
     pause
     exit /b 1
 )
 
-echo Using Python:
-"%PY%" --version
+echo Using Python: !PY!
+"!PY!" --version
 if errorlevel 1 (
-    echo [ERROR] Embedded Python не запускается
+    echo [ERROR] Embedded Python ne zapuskaetsya
     pause
     exit /b 1
 )
@@ -33,39 +39,24 @@ if errorlevel 1 (
 cd /d "%CORE%"
 
 echo.
-echo =============================================
-echo ЗАПУСК СЕРВЕРА - %RUNSCR%
-echo =============================================
-echo.
-
-echo  ████████╗██████╗ ███████╗██╗  ██╗███████╗██████╗
-echo  ╚══██╔══╝██╔══██╗██╔════╝██║ ██╔╝██╔════╝██╔══██╗
-echo     ██║   ██████╔╝█████╗  █████╔╝ █████╗  ██████╔╝
-echo     ██║   ██╔══██╗██╔══╝  ██╔═██╗ ██╔══╝  ██╔══██╗
-echo     ██║   ██║  ██║███████╗██║  ██╗███████╗██║  ██║
-echo     ╚═╝   ╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝
-echo.
-echo   ███████╗ █████╗ ██████╗  █████╗  ██████╗██╗  ██╗
-echo   ╚══███╔╝██╔══██╗██╔══██╗██╔══██╗██╔════╝██║  ██║
-echo     ███╔╝ ███████║██║  ██║███████║██║     ███████║
-echo    ███╔╝  ██╔══██║██║  ██║██╔══██║██║     ██╔══██║
-echo   ███████╗██║  ██║██████╔╝██║  ██║╚██████╗██║  ██║
-echo   ╚══════╝╚═╝  ╚═╝╚═════╝ ╚═╝  ╚═╝ ╚═════╝╚═╝  ╚═╝
-echo.
-echo    ╔═══════════════════════════════════════════╗
-echo    ║   Т  Р  Е  К  Е  Р      З  А  Д  А  Ч     ║
-echo    ╚═══════════════════════════════════════════╝
-echo.
 echo ============================================================
-echo   Порт: 5431
-echo   Ctrl+C для остановки сервера
+echo    T R E K E R   Z A D A C H   -  SERVER START
+echo    http://localhost:5431/
+echo    Stop: Ctrl+C  (or close this window)
+echo ============================================================
 echo.
 
-"%PY%" "%CORE%\run.py"
+rem --- Clear stale pyc caches (can hide old broken code after rollback) ---
+if exist "%CORE%\__pycache__" rd /s /q "%CORE%\__pycache__"
+
+:loop
+"!PY!" "%CORE%\run.py"
+echo Server stopped. Restarting in 3 seconds...
+timeout /t 3
+goto loop
 
 echo.
-echo Сервер остановлен.
+echo Server stopped.
 pause
 endlocal
 exit /b 0
-
