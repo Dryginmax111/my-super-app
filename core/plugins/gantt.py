@@ -390,6 +390,51 @@ body.trk-theme-light .gg-bar-planned { background: linear-gradient(180deg, #b0be
 body.trk-theme-light .gg-bar-archived { background: linear-gradient(180deg, #cfd8dc, #78909c); }
 body.trk-theme-light .legend { background: #ffffff; border-top-color: rgba(0,0,0,0.08); }
 
+/* --- Слайдер прокрутки --- */
+.gg-slider-wrap {
+    padding: 4px 18px 10px;
+    background: var(--pg-card-bg, #1a1a1a);
+    border: 1px solid var(--pg-card-border, rgba(245,215,110,0.22));
+    border-radius: 14px;
+}
+.gg-slider-wrap input[type="range"] {
+    width: 100%;
+    accent-color: var(--pg-accent, #f5d76e);
+    cursor: pointer;
+}
+
+/* --- Недельный режим: двухслойная шапка --- */
+.gg-wk-head { display: flex; flex-direction: column; }
+.gg-wk-months, .gg-wk-weeks { display: flex; }
+.gg-wk-month {
+    flex: 0 0 auto;
+    display: flex; align-items: center; justify-content: center;
+    height: 26px;
+    font-size: 0.72rem; font-weight: 800; text-transform: capitalize;
+    letter-spacing: 0.4px;
+    color: #0a0a0a;
+    border-right: 2px solid rgba(0,0,0,0.25);
+}
+.gg-wk-week {
+    flex: 0 0 auto;
+    display: flex; align-items: center; justify-content: center;
+    height: 32px;
+    font-size: 0.68rem; font-weight: 700;
+    color: var(--pg-text, #e8e8e8);
+    border-right: 1px solid var(--pg-card-border-soft, rgba(245,215,110,0.12));
+}
+.gg-wk-week.today { box-shadow: inset 0 -3px 0 #2ecc71; color: #2ecc71; }
+.gg-wk-cell {
+    position: absolute; top: 4px; bottom: 4px;
+    border-radius: 4px;
+    border-right: 1px solid rgba(0,0,0,0.18);
+    opacity: 0.95;
+    cursor: default;
+}
+.gg-wk-cell.empty { background: transparent !important; border: none; }
+body.trk-theme-light .gg-slider-wrap { background:#fff; }
+body.trk-theme-light .gg-wk-week { color:#212121; }
+
 @media (max-width: 700px) {
     .gg-corner, .gg-name { flex-basis: 220px; width: 220px; }
     .gg-bg { left: 220px; }
@@ -414,10 +459,17 @@ body.trk-theme-light .legend { background: #ffffff; border-top-color: rgba(0,0,0
             <option value="done">Выполненные</option>
             <option value="archived">Архив</option>
         </select>
+        <label>Вид <select id="fView">
+            <option value="week">Недели</option>
+            <option value="day">Дни</option>
+        </select></label>
         <button class="apply" id="fApply">✓ Показать</button>
     </div>
     <div class="gantt-box" id="ganttBox">
         <div class="loading">Загрузка…</div>
+    </div>
+    <div class="gg-slider-wrap" id="ggSliderWrap" style="display:none;">
+        <input type="range" id="ggSlider" min="0" max="1000" value="0" step="1">
     </div>
     <div class="legend">
         <div class="it"><span class="sw active"></span>В работе</div>
@@ -477,6 +529,48 @@ function initDates() {
     document.getElementById('fTo').value = iso(end);
 }
 
+var WEEK_W = 92;         /* ширина недельной колонки */
+var MONTH_COLORS = ['#3b5ba5','#2e8b7a','#a5683b','#6a4ba5','#a53b5b','#5b8b2e','#8b7a2e','#2e6aa5','#a53b8b','#4ba58b','#a5a53b','#7a2ea5'];
+var MONTH_NAMES = ['Январь','Февраль','Март','Апрель','Май','Июнь','Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'];
+
+/* ISO-понедельник недели, в которую попадает дата iso */
+function mondayOf(iso) {
+    var p = iso.split('-');
+    var d = new Date(parseInt(p[0],10), parseInt(p[1],10)-1, parseInt(p[2],10));
+    var wd = d.getDay();
+    var diff = (wd === 0) ? -6 : (1 - wd);
+    d.setDate(d.getDate() + diff);
+    var y=d.getFullYear(), m=String(d.getMonth()+1).padStart(2,'0'), dd=String(d.getDate()).padStart(2,'0');
+    return y+'-'+m+'-'+dd;
+}
+/* Список недель (понедельников) перекрывающих диапазон days[] */
+function buildWeeks(days) {
+    if (!days.length) return [];
+    var first = mondayOf(days[0]);
+    var lastMon = mondayOf(days[days.length-1]);
+    var weeks = [];
+    var cur = first;
+    var guard = 0;
+    while (cur <= lastMon && guard < 520) {
+        var sun = isoAddDays(cur, 6);
+        weeks.push({ mon: cur, sun: sun });
+        cur = isoAddDays(cur, 7);
+        guard++;
+    }
+    return weeks;
+}
+/* Этап, активный в понедельник недели: stage.start <= mon <= stage.end */
+function stageAtMonday(stages, mon) {
+    if (!stages) return null;
+    for (var i = 0; i < stages.length; i++) {
+        var st = stages[i];
+        if (!st.start) continue;
+        var end = st.end || st.start;
+        if (st.start <= mon && mon <= end) return st;
+    }
+    return null;
+}
+
 function loadMeta() {
     fetch('/api/plugins/gantt/meta', {credentials: 'same-origin'})
         .then(function(r) { return r.json(); })
@@ -516,6 +610,30 @@ function load() {
 }
 
 function render(d) {
+    var view = document.getElementById('fView').value;
+    if (view === 'week') { renderWeek(d); }
+    else { renderDay(d); }
+    setupSlider();
+}
+
+function setupSlider() {
+    var box = document.getElementById('ganttBox');
+    var wrap = document.getElementById('ggSliderWrap');
+    var sl = document.getElementById('ggSlider');
+    var maxScroll = box.scrollWidth - box.clientWidth;
+    if (maxScroll <= 2) { wrap.style.display = 'none'; return; }
+    wrap.style.display = 'block';
+    sl.max = String(Math.round(maxScroll));
+    sl.value = String(Math.round(box.scrollLeft));
+    sl.oninput = function() { box.scrollLeft = parseInt(sl.value, 10); };
+    box.onscroll = function() {
+        var ms = box.scrollWidth - box.clientWidth;
+        sl.max = String(Math.round(ms));
+        sl.value = String(Math.round(box.scrollLeft));
+    };
+}
+
+function renderDay(d) {
     var box = document.getElementById('ganttBox');
     var tasks = d.tasks || [];
     var days = d.days || [];
@@ -644,11 +762,107 @@ function render(d) {
     box.innerHTML = html;
 }
 
+function renderWeek(d) {
+    var box = document.getElementById('ganttBox');
+    var tasks = d.tasks || [];
+    var days = d.days || [];
+    var today = d.today || '';
+
+    if (!tasks.length) { box.innerHTML = '<div class="empty">Нет задач за выбранный период</div>'; return; }
+    if (!days.length) { box.innerHTML = '<div class="empty">Пустой диапазон дат</div>'; return; }
+
+    var STAGE_ORDER = ['подготовка','проверка_нжя','проверка_соглЦА','ос_проф','реализация_возражения','реализация_согласования','запас','оценка_тб'];
+    var STAGE_COLORS = {'подготовка':'#5dade2','проверка_нжя':'#48c9b0','проверка_соглЦА':'#58d68d','ос_проф':'#f4d03f','реализация_возражения':'#eb984e','реализация_согласования':'#e59866','запас':'#af7ac5','оценка_тб':'#ec7063'};
+    var STAGE_LABELS = {'подготовка':'Подготовка','проверка_нжя':'Проверка НЖЯ','проверка_соглЦА':'Проверка согл. ЦА','ос_проф':'ОС проф.','реализация_возражения':'Реализация возражения','реализация_согласования':'Реализация согласования','запас':'Запас','оценка_тб':'Оценка ТБ'};
+
+    var weeks = buildWeeks(days);
+    if (!weeks.length) { box.innerHTML = '<div class="empty">Пустой диапазон дат</div>'; return; }
+    var todayMon = today ? mondayOf(today) : '';
+    var trackW = weeks.length * WEEK_W;
+
+    /* Группировка недель по месяцам (по месяцу понедельника) для верхнего слоя */
+    var monthSpans = [];
+    weeks.forEach(function(w) {
+        var mi = parseInt(w.mon.split('-')[1], 10) - 1;
+        var yr = w.mon.split('-')[0];
+        var key = yr + '-' + mi;
+        var last = monthSpans[monthSpans.length - 1];
+        if (last && last.key === key) { last.count++; }
+        else { monthSpans.push({ key: key, mi: mi, yr: yr, count: 1 }); }
+    });
+
+    var html = '<div class="gantt-inner">';
+
+    /* Шапка: двухслойная */
+    html += '<div class="gg-header" style="height:58px;">';
+    html += '<div class="gg-corner">Задача</div>';
+    html += '<div class="gg-wk-head">';
+    /* слой месяцев */
+    html += '<div class="gg-wk-months">';
+    monthSpans.forEach(function(m, idx) {
+        var col = MONTH_COLORS[m.mi % MONTH_COLORS.length];
+        html += '<div class="gg-wk-month" style="width:' + (m.count * WEEK_W) + 'px;background:' + col + '">' + MONTH_NAMES[m.mi] + '</div>';
+    });
+    html += '</div>';
+    /* слой недель */
+    html += '<div class="gg-wk-weeks">';
+    weeks.forEach(function(w) {
+        var cls = 'gg-wk-week' + (w.mon === todayMon ? ' today' : '');
+        html += '<div class="' + cls + '" style="width:' + WEEK_W + 'px" title="' + w.mon + ' — ' + w.sun + '">' + fmtD(w.mon) + '–' + fmtD(w.sun) + '</div>';
+    });
+    html += '</div>';
+    html += '</div></div>';
+
+    /* Тело */
+    html += '<div class="gg-body">';
+    /* фон недели "сегодня" */
+    html += '<div class="gg-bg" style="width:' + trackW + 'px">';
+    weeks.forEach(function(w, i) {
+        if (w.mon === todayMon) {
+            html += '<div class="gg-bg-cell gg-bg-today" style="left:' + (i * WEEK_W) + 'px;width:' + WEEK_W + 'px"></div>';
+        }
+    });
+    html += '</div>';
+
+    tasks.forEach(function(t) {
+        html += '<div class="gg-row">';
+        html +=   '<div class="gg-name">';
+        html +=     '<span class="gg-dot gg-dot-' + (t.overdue ? 'overdue' : (t.status||'active')) + '"></span>';
+        html +=     '<span class="gg-ico">' + esc(t.icon || '📋') + '</span>';
+        html +=     '<span class="gg-task-name" title="' + esc(t.name) + '">' + esc(t.name) + '</span>';
+        html +=   '</div>';
+        html +=   '<div class="gg-track" style="width:' + trackW + 'px">';
+        /* По каждой неделе — цвет этапа, активного в понедельник */
+        weeks.forEach(function(w, i) {
+            var st = stageAtMonday(t.stages, w.mon);
+            if (!st) return;
+            var col = STAGE_COLORS[st.key] || '#888';
+            var ttl = (STAGE_LABELS[st.key] || st.key) + ' · неделя ' + fmtD(w.mon) + '–' + fmtD(w.sun);
+            html += '<div class="gg-wk-cell" style="left:' + (i * WEEK_W + 2) + 'px;width:' + (WEEK_W - 4) + 'px;background:' + col + '" title="' + esc(ttl) + '"></div>';
+        });
+        html +=   '</div>';
+        html += '</div>';
+    });
+
+    html += '</div>';  /* gg-body */
+    html += '</div>';  /* gantt-inner */
+
+    /* Легенда этапов */
+    html += '<div class="gg-stage-legend">';
+    STAGE_ORDER.forEach(function(k) {
+        html += '<span class="lg-item"><span class="lg-chip" style="background:' + STAGE_COLORS[k] + '"></span>' + STAGE_LABELS[k] + '</span>';
+    });
+    html += '</div>';
+
+    box.innerHTML = html;
+}
+
 /* --- Запуск --- */
 document.getElementById('fApply').addEventListener('click', load);
 document.getElementById('fDept').addEventListener('change', load);
 document.getElementById('fTeam').addEventListener('change', load);
 document.getElementById('fStatus').addEventListener('change', load);
+document.getElementById('fView').addEventListener('change', load);
 initDates();
 loadMeta();
 load();
