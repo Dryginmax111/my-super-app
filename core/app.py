@@ -1541,19 +1541,23 @@ def create_app():
         if status not in ('done', 'archived'):
             completed_at = ''
 
-        created = db.upsert_task(task_id, {
-            'name': name, 'icon': icon, 'description': description,
-            'status': status, 'start_date': start_date, 'deadline': deadline,
-            'completed_at': completed_at, 'folder': folder, 'order_ref': order_ref,
-            'tags': tags, 'assignees': assignees, 'department_ids': dep_ids,
-            'created_at': now_str,
-            'is_urgent': is_urgent,
-            'links': links,
-            'orders': orders,
-            'task_type': task_type,
-            'pocket': pocket,
-            'stages': stages,
-        })
+        try:
+            created = db.upsert_task(task_id, {
+                'name': name, 'icon': icon, 'description': description,
+                'status': status, 'start_date': start_date, 'deadline': deadline,
+                'completed_at': completed_at, 'folder': folder, 'order_ref': order_ref,
+                'tags': tags, 'assignees': assignees, 'department_ids': dep_ids,
+                'created_at': now_str,
+                'is_urgent': is_urgent,
+                'links': links,
+                'orders': orders,
+                'task_type': task_type,
+                'pocket': pocket,
+                'stages': stages,
+            })
+        except ValueError as _ve:
+            # PATCH tasks-stages: валидация пересечения этапов в db.upsert_task
+            return jsonify({'success': False, 'error': str(_ve)}), 400
         # PATCH v1.0.9: если админ вручную вернул задачу из done в другой
         # статус — снимаем метку авто (статус снова считается решением админа).
         try:

@@ -56,6 +56,27 @@ TASK_STAGE_COLS = ['stage_%s_start' % k for k in TASK_STAGE_ORDER]
 # =========================================================================
 
 
+def _validate_task_stages(stage_map):
+    """Проверяет, что даты начала этапов строго возрастают (этапы не
+    пересекаются). stage_map: {stage_key: 'YYYY-MM-DD'|''}. Пустые этапы
+    пропускаются. Возвращает (ok: bool, error: str|None)."""
+    prev = None
+    prev_key = None
+    for key in TASK_STAGE_ORDER:
+        v = str((stage_map or {}).get(key) or '').strip()
+        if not v:
+            continue
+        if prev is not None and v <= prev:
+            return (False,
+                    'Этап "%s" (%s) начинается не позже предыдущего "%s" (%s): '
+                    'этапы не могут пересекаться.' % (
+                        TASK_STAGE_LABELS.get(key, key), v,
+                        TASK_STAGE_LABELS.get(prev_key, prev_key), prev))
+        prev = v
+        prev_key = key
+    return (True, None)
+
+
 def _compute_task_stages(task):
     """Собирает список этапов задачи с вычисленными концами.
 
@@ -490,6 +511,9 @@ class TrackerDB:
         if not isinstance(_stages, dict):
             _stages = {}
         _stage_vals = [str(_stages.get(_k) or '').strip() for _k in TASK_STAGE_ORDER]
+        _ok, _err = _validate_task_stages(_stages)
+        if not _ok:
+            raise ValueError(_err)
         _task_type = str(payload.get('task_type') or '').strip()
         if _task_type not in TASK_TYPES:
             _task_type = ''

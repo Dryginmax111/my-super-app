@@ -9693,3 +9693,11 @@ body.trk-theme-light .day-assigned-block .dab-tile .dab-add:hover:not(:disabled)
 .task-stage-name { flex: 1 1 180px; min-width: 150px; font-size: .86rem; }
 .task-stage-f { display: inline-flex; align-items: center; gap: 4px; font-size: .78rem; opacity: .85; }
 .task-stage-f input[type="date"] { font-size: .8rem; padding: 2px 4px; }
+
+/* PATCH tasks-stages: подсветка пересечения этапов */
+.task-stage-row.task-stage-conflict {
+    background: rgba(231, 76, 60, .14);
+    box-shadow: 0 0 0 1px rgba(231, 76, 60, .45) inset;
+}
+.task-stage-row.task-stage-conflict .task-stage-name { color: #e74c3c; font-weight: 600; }
+.task-stage-row.task-stage-conflict input[type="date"] { border-color: #e74c3c; }

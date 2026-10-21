@@ -2896,26 +2896,84 @@ function _fillPocketOptions() {
     dl.innerHTML = opts.map(function(p){ return '<option value="' + escapeHtml(p) + '">'; }).join('');
 }
 
+// Нижняя граница для начала этапа idx: начало ближайшего ЗАПОЛНЕННОГО
+// предыдущего этапа (этап не может идти раньше предшественника),
+// иначе — дата начала задачи.
+function _stageMinStart(idx) {
+    for (var j = idx - 1; j >= 0; j--) {
+        if (_taskStagesDraft[TASK_STAGE_ORDER[j]]) {
+            return _stageDayShift(_taskStagesDraft[TASK_STAGE_ORDER[j]], 1);
+        }
+    }
+    var sd = $('task_start_date') ? $('task_start_date').value.trim() : '';
+    return sd || '';
+}
+// Верхняя граница для начала этапа idx: начало ближайшего ЗАПОЛНЕННОГО
+// следующего этапа минус 1 день (нельзя наехать), иначе — дедлайн задачи.
+function _stageMaxStart(idx) {
+    for (var j = idx + 1; j < TASK_STAGE_ORDER.length; j++) {
+        if (_taskStagesDraft[TASK_STAGE_ORDER[j]]) {
+            return _stageDayShift(_taskStagesDraft[TASK_STAGE_ORDER[j]], -1);
+        }
+    }
+    var dl = $('task_deadline') ? $('task_deadline').value.trim() : '';
+    return dl || '';
+}
+// Проверка пересечений/нарушения порядка по текущему черновику.
+// Возвращает массив индексов конфликтных этапов (пусто = всё ок).
+function _taskStagesConflicts() {
+    var bad = {};
+    var prevIdx = -1;
+    for (var i = 0; i < TASK_STAGE_ORDER.length; i++) {
+        var s = _taskStagesDraft[TASK_STAGE_ORDER[i]];
+        if (!s) continue;
+        if (prevIdx >= 0) {
+            var ps = _taskStagesDraft[TASK_STAGE_ORDER[prevIdx]];
+            // следующий заполненный этап обязан начинаться ПОЗЖE предыдущего
+            if (s <= ps) { bad[i] = 1; bad[prevIdx] = 1; }
+        }
+        prevIdx = i;
+    }
+    return Object.keys(bad).map(function(k){ return parseInt(k,10); });
+}
 function renderTaskStages() {
     var box = $('taskStagesList');
     if (!box) return;
+    var conflicts = {};
+    _taskStagesConflicts().forEach(function(i){ conflicts[i] = 1; });
     var html = '';
     TASK_STAGE_ORDER.forEach(function(key, idx) {
         var start = _taskStagesDraft[key] || '';
         var end = _stageEnd(idx);
         var col = TASK_STAGE_COLORS[key] || '#888';
         var isLast = (idx === TASK_STAGE_ORDER.length - 1);
-        html += '<div class="task-stage-row">';
+        var minS = _stageMinStart(idx);
+        var maxS = _stageMaxStart(idx);
+        var minAttr = minS ? ' min="' + minS + '"' : '';
+        var maxAttr = maxS ? ' max="' + maxS + '"' : '';
+        var rowCls = 'task-stage-row' + (conflicts[idx] ? ' task-stage-conflict' : '');
+        html += '<div class="' + rowCls + '">';
         html +=   '<span class="task-stage-chip" style="background:' + col + '"></span>';
         html +=   '<span class="task-stage-name">' + escapeHtml(TASK_STAGE_LABELS[key] || key) + '</span>';
-        html +=   '<label class="task-stage-f">\u043d\u0430\u0447. <input type="date" class="task-stage-start" data-stage="' + key + '" value="' + start + '"></label>';
-        html +=   '<label class="task-stage-f">\u043a\u043e\u043d. <input type="date" class="task-stage-end" data-stage-idx="' + idx + '" value="' + end + '"' + (isLast ? ' disabled' : '') + '></label>';
+        html +=   '<label class="task-stage-f">\u043d\u0430\u0447. <input type="date" class="task-stage-start" data-stage="' + key + '" data-stage-idx="' + idx + '" value="' + start + '"' + minAttr + maxAttr + '></label>';
+        var endMin = start ? ' min="' + _stageDayShift(start, 1) + '"' : '';
+        var endMax = maxS ? ' max="' + _stageDayShift(maxS, 1) + '"' : '';
+        html +=   '<label class="task-stage-f">\u043a\u043e\u043d. <input type="date" class="task-stage-end" data-stage-idx="' + idx + '" value="' + end + '"' + (isLast ? ' disabled' : endMin + endMax) + '></label>';
         html += '</div>';
     });
     box.innerHTML = html;
     box.querySelectorAll('.task-stage-start').forEach(function(inp){
         inp.addEventListener('change', function(){
-            _taskStagesDraft[this.getAttribute('data-stage')] = this.value || '';
+            var key = this.getAttribute('data-stage');
+            var idx = parseInt(this.getAttribute('data-stage-idx'), 10);
+            var val = this.value || '';
+            // клип-защита от ручного ввода мимо границ календаря
+            if (val) {
+                var lo = _stageMinStart(idx), hi = _stageMaxStart(idx);
+                if (lo && val < lo) val = lo;
+                if (hi && val > hi) val = hi;
+            }
+            _taskStagesDraft[key] = val;
             renderTaskStages();
         });
     });
@@ -2924,7 +2982,15 @@ function renderTaskStages() {
             var idx = parseInt(this.getAttribute('data-stage-idx'), 10);
             var nextKey = TASK_STAGE_ORDER[idx+1];
             if (!nextKey) return;
-            _taskStagesDraft[nextKey] = this.value ? _stageDayShift(this.value, 1) : '';
+            // правка конца = начало следующего этапа (конец + 1 день), с клипом
+            var ns = this.value ? _stageDayShift(this.value, 1) : '';
+            if (ns) {
+                var hi = _stageMaxStart(idx+1);
+                var lo = _stageMinStart(idx+1);
+                if (hi && ns > hi) ns = hi;
+                if (lo && ns < lo) ns = lo;
+            }
+            _taskStagesDraft[nextKey] = ns;
             renderTaskStages();
         });
     });
@@ -2986,6 +3052,16 @@ function openTaskModal(task) {
 function saveTask() {
     var name = $('task_name') ? $('task_name').value.trim() : '';
     if (!name) { notify('❌ Укажите название', 'error'); return; }
+    // PATCH tasks-stages: запрет пересечения этапов
+    var _stConf = _taskStagesConflicts();
+    if (_stConf.length) {
+        var _names = _stConf.sort(function(a,b){return a-b;}).map(function(i){
+            return TASK_STAGE_LABELS[TASK_STAGE_ORDER[i]] || TASK_STAGE_ORDER[i];
+        });
+        notify('❌ Этапы пересекаются: ' + _names.join(', ') + '. Начало каждого следующего этапа должно быть позже предыдущего.', 'error');
+        renderTaskStages();
+        return;
+    }
     var status = $('task_status') ? $('task_status').value : 'active';
     var completed = $('task_completed_at') ? $('task_completed_at').value.trim() : '';
     var payload = {
