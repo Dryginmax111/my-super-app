@@ -1,0 +1,7 @@
+{
+  "enabled": true,
+  "weekday": 4,
+  "hour": 18,
+  "keep": 26,
+  "first_run_after_seconds": 120
+}

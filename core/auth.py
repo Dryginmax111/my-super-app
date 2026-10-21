@@ -8,8 +8,7 @@ PATCH v2: возвращены кириллические имена функц�
 import secrets
 from functools import wraps
 from flask import session, redirect, url_for, jsonify, request, g
-from werkzeug.security import generate_kody_hash, check_kody_hash
-
+from werkzeug.security import generate_password_hash, check_password_hash
 
 PERMISSION_GROUPS = [
     {
@@ -139,12 +138,12 @@ def effective_permissions(db, user):
 
 # PATCH v2: имена функций возвращены к кириллице, как было в оригинале.
 def hash_kody(pwd):
-    return generate_kody_hash(pwd, method='pbkdf2:sha256:150000')
+    return generate_password_hash(pwd, method='pbkdf2:sha256:150000')
 
 
 def verify_kody(pwd_hash, pwd):
     try:
-        return check_kody_hash(pwd_hash, pwd)
+        return check_password_hash(pwd_hash, pwd)
     except Exception:
         return False
 

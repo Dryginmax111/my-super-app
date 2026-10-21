@@ -1,0 +1,9 @@
+{
+  "enabled": true,
+  "check_interval_hours": 24,
+  "first_run_after_seconds": 60,
+  "pause_after_days_overdue": 7,
+  "pause_if_no_log_days": 5,
+  "block_after_days_overdue": 30,
+  "block_if_no_log_days": 14
+}
