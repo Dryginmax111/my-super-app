@@ -6,3 +6,4 @@
 "\my-super-app-main\runtime\embedded\python313\python.exe" "\my-super-app-main\core\patcher.py" "\my-super-app-main\revert_kody.json"
 Откатить патч по имени:
 "\my-super-app-main\runtime\embedded\python313\python.exe" "\my-super-app-main\core\patcher.py" --rollback 1.0.1
+START_wheels.bat: запуск с установкой библиотек в \my-super-app-main\runtime\embedded\python313\ из \my-super-app-main\tools\wheels\
