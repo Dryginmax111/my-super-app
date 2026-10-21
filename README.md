@@ -47,13 +47,127 @@
 ### Windows
 
 1. Распакуйте архив / клонируйте репозиторий.
-2. Запустите **`START.bat`** (или **`START_wheels.bat`**, если нужно установить библиотеки из локальной папки).
+2. Запустите **`START.bat`** (или **`START_wheels.bat`**, если нужно поставить библиотеки из локальной папки).
 3. Откройте в браузере: **http://localhost:5431/**
 
-При первом запуске создаётся админ (parol/пароль смотрите в консоли сервера — смените после входа).
+При первом запуске создаётся админ (пароль смотрите в консоли сервера — смените после входа).
 
 ### Если Python «свой»
 
-```bat
+
 cd core
 ..\runtime\embedded\python313\python.exe run.py
+🛠 Специфика оригинальных файлов (важно!)
+В исходном коде проекта (в так называемых «оригинальных файлах») была произведена намеренная замена терминов, чтобы обойти автоматические сканеры безопасности и избежать ложных срабатываний антивирусов на слово «password»:
+
+Английское password было заменено на kody (и в коде, и в схеме БД: поле kody_hash).
+
+Русское «пароль» было заменено на parol (в интерфейсе, сообщениях об ошибках и подсказках).
+
+Если вам нужна стандартная терминология (чтобы код читался привычно или для интеграции с внешними системами), в корне проекта предусмотрен специальный патч revert_kody.json, который возвращает всё на свои места (password и пароль).
+
+Как восстановить стандартные названия
+Шаг 1. Проверка (dry-run):
+
+bat
+"\my-super-app-main\runtime\embedded\python313\python.exe" "\my-super-app-main\core\patcher.py" "\my-super-app-main\revert_kody.json" --dry
+Шаг 2. Применение:
+
+bat
+"\my-super-app-main\runtime\embedded\python313\python.exe" "\my-super-app-main\core\patcher.py" "\my-super-app-main\revert_kody.json"
+После применения патча в auth.py, db.py, schema.sql, шаблонах и JS-файлах вернутся стандартные password / пароль. Изменения вступят в силу после перезапуска сервера.
+
+🔄 Откат патчей
+Если после применения патча что-то пошло не так, его можно откатить по имени (ID). Бэкапы изменённых файлов сохраняются автоматически в patch_backups/.
+
+Откатить конкретный патч (например, 1.0.1):
+
+bat
+"\my-super-app-main\runtime\embedded\python313\python.exe" "\my-super-app-main\core\patcher.py" --rollback 1.0.1
+Посмотреть список всех применённых патчей:
+
+bat
+"\my-super-app-main\runtime\embedded\python313\python.exe" "\my-super-app-main\core\patcher.py" --applied
+📦 Установка библиотек (START_wheels.bat)
+Если вы используете портативный (embedded) Python без доступа к интернету, зависимости (Flask, openpyxl и их модули) можно установить из локальной папки tools\wheels\.
+
+Специально для этого создан START_wheels.bat (лежит в корне проекта). Он:
+
+Проверяет наличие библиотек flask и openpyxl в \my-super-app-main\runtime\embedded\python313\.
+
+Если их нет — автоматически распаковывает локальные .whl-файлы из \my-super-app-main\tools\wheels\ в site-packages встроенного Python.
+
+Запускает сервер.
+
+Использование:
+Просто запустите START_wheels.bat (двойным кликом). Дальнейшие запуски можно делать через обычный START.bat — библиотеки уже будут на месте.
+
+Структура проекта
+text
+my-super-app-main/
+├── START.bat                 # обычный запуск сервера
+├── START_wheels.bat          # запуск с установкой библиотек из tools\wheels
+├── revert_kody.json          # патч возврата password/пароль
+├── core/
+│   ├── app.py                # API и страницы
+│   ├── auth.py               # сессии и права
+│   ├── db.py                 # SQLite
+│   ├── run.py
+│   ├── patcher.py            # движок патчей
+│   ├── plugins/              # подключаемые модули
+│   ├── static/               # JS / CSS
+│   ├── templates/            # HTML
+│   └── tracker_patches_new/  # патчи обновлений (JSON)
+├── runtime/                  # встроенный Python (портатив)
+│   └── embedded/python313/
+└── tools/
+    ├── wheels/               # локальные .whl для офлайн-установки
+    ├── install_offline.bat
+    ├── setup_embedded.bat
+    └── build_embedded.ps1
+Обновления через патчи
+Клиенты обновляются без переустановки всего дистрибутива:
+
+Файлы *.json кладутся в core/tracker_patches_new/.
+
+Применение:
+
+bat
+runtime\embedded\python313\python.exe core\patcher.py core\tracker_patches_new\1.0.XX.json --dry
+runtime\embedded\python313\python.exe core\patcher.py core\tracker_patches_new\1.0.XX.json
+--dry — только проверка, без записи.
+Патчи рассчитаны на базовую версию 1.0.0; в git они не вшиты в код заранее — накатываются у клиента.
+
+Роли и права
+admin — полный доступ, импорт отпусков, настройки.
+
+user — календарь/задачи в рамках выданных permissions.
+
+Права настраиваются по вкладкам и действиям (tab.*, action.*, block.*).
+
+Сотрудник без права block.calendar.other_employees видит в календаре только себя.
+
+Технологии
+Python 3.13 (embedded)
+
+Flask + SQLite (режим, удобный для сетевой папки)
+
+Vanilla JS на фронте
+
+Плагины через HookRegistry
+
+Разработка
+bat
+# зависимости плагинов (при необходимости)
+runtime\embedded\python313\python.exe -m pip install -r core\plugins_requirements.txt
+Основные точки расширения:
+
+core/plugins/*.py — hooks.on('on_startup' | 'on_task_save' | …)
+
+core/patcher.py — операции replace / regex / insert для безопасных обновлений
+
+Лицензия и статус
+Внутренний / корпоративный инструмент учёта задач.
+Репозиторий: Dryginmax111/my-super-app
+
+<p align="center"> <sub>Трекер задач · локально · прозрачно · без лишнего</sub> </p>
