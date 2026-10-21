@@ -47,97 +47,13 @@
 ### Windows
 
 1. Распакуйте архив / клонируйте репозиторий.
-2. Запустите **`START.bat`**.
+2. Запустите **`START.bat`** (или **`START_wheels.bat`**, если нужно поставить библиотеки из локальной папки).
 3. Откройте в браузере: **http://localhost:5431/**
 
-При первом запуске создаётся админ (parol/пароль смотрите в консоли сервера — смените после входа).
+При первом запуске создаётся админ (пароль смотрите в консоли сервера — смените после входа).
 
 ### Если Python «свой»
 
 ```bat
 cd core
 ..\runtime\embedded\python313\python.exe run.py
-```
-
----
-
-## Структура проекта
-
-```
-my-super-app/
-├── START.bat                 # запуск сервера
-├── core/
-│   ├── app.py                # API и страницы
-│   ├── auth.py               # сессии и права
-│   ├── db.py                 # SQLite
-│   ├── run.py
-│   ├── plugins/              # подключаемые модули
-│   ├── static/               # JS / CSS
-│   ├── templates/            # HTML
-│   └── tracker_patches_new/  # патчи обновлений (JSON)
-├── runtime/                  # встроенный Python (портатив)
-└── tools/                    # сборка патчей, утилиты
-```
-
----
-
-## Обновления через патчи
-
-Клиенты обновляются **без переустановки** всего дистрибутива:
-
-1. Файлы `*.json` кладутся в `core/tracker_patches_new/`.
-2. Применение:
-
-```bat
-runtime\embedded\python313\python.exe core\patcher.py core\tracker_patches_new\1.0.XX.json --dry
-runtime\embedded\python313\python.exe core\patcher.py core\tracker_patches_new\1.0.XX.json
-```
-
-`--dry` — только проверка, без записи.  
-Патчи рассчитаны на базовую версию **1.0.0**; в git они **не** вшиты в код заранее — накатываются у клиента.
-
----
-
-## Роли и права
-
-- **admin** — полный доступ, импорт отпусков, настройки.
-- **user** — календарь/задачи в рамках выданных permissions.
-- Права настраиваются по вкладкам и действиям (`tab.*`, `action.*`, `block.*`).
-
-Сотрудник без права `block.calendar.other_employees` видит в календаре **только себя**.
-
----
-
-## Технологии
-
-- **Python 3.13** (embedded)
-- **Flask** + **SQLite** (режим, удобный для сетевой папки)
-- Vanilla **JS** на фронте
-- Плагины через `HookRegistry`
-
----
-
-## Разработка
-
-```bat
-# зависимости плагинов (при необходимости)
-runtime\embedded\python313\python.exe -m pip install -r core\plugins_requirements.txt
-```
-
-Основные точки расширения:
-
-- `core/plugins/*.py` — `hooks.on('on_startup' | 'on_task_save' | …)`
-- `core/patcher.py` — операции `replace` / `regex` / `insert` для безопасных обновлений
-
----
-
-## Лицензия и статус
-
-Внутренний / корпоративный инструмент учёта задач.  
-Репозиторий: [Dryginmax111/my-super-app](https://github.com/Dryginmax111/my-super-app)
-
----
-
-<p align="center">
-  <sub>Трекер задач · локально · прозрачно · без лишнего</sub>
-</p>
