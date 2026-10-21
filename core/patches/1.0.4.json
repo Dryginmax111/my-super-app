@@ -1,0 +1,31 @@
+{
+  "id": "1.0.4",
+  "target_version": "1.0.4",
+  "independent": true,
+  "description": "Фикс карточек задач: иконка+название на одной строке, бейджи перенесены вниз через безопасный JS, без ломающих CSS-правил.",
+  "requires": [],
+  "operations": [
+
+    {
+      "type": "append",
+      "path": "static/app.css",
+      "idempotent": true,
+      "content": "\n\n/* ============================================================\n   PATCH 1.0.5 — Безопасная правка карточек задач\n   ============================================================ */\n\n/* 1. Убеждаемся, что шапка — это flex-строка */\n.tasks-grid .task-card-head {\n    display: flex !important;\n    flex-wrap: wrap !important; /* разрешаем перенос, если не влезет */\n    align-items: flex-start !important;\n    gap: 8px !important;\n}\n\n/* 2. Иконка не должна сплющиваться */\n.tasks-grid .task-card-icon-wrap {\n    flex: 0 0 auto !important;\n}\n\n/* 3. Блок с названием занимает всё свободное место */\n.tasks-grid .task-card-titles {\n    flex: 1 1 0% !important; /* 0% заставляет flex-элемент сжиматься до контента */\n    min-width: 0 !important;\n}\n\n/* 4. Блок с бейджами (topright), если он остался в шапке */\n.tasks-grid .task-card-topright {\n    flex: 0 0 auto !important;\n    display: flex !important;\n    flex-wrap: wrap !important;\n    align-items: center !important;\n    gap: 6px !important;\n    margin-top: 4px !important;\n}\n\n/* 5. Бейджи делаем компактными и не ломающими строку */\n.tasks-grid .task-card-badge {\n    font-size: 0.65rem !important;\n    padding: 2px 8px !important;\n    white-space: nowrap !important;\n}\n\n/* 6. Блок с датами (mid) — если туда упали бейджи */\n.tasks-grid .task-card-mid {\n    margin-top: 6px !important;\n}\n"
+    },
+
+    {
+      "type": "append",
+      "path": "static/tracker.js",
+      "idempotent": true,
+      "content": "\n\n/* ============================================================\n   PATCH 1.0.5 — Безопасная правка карточек задач\n   ============================================================ */\n(function(){\n'use strict';\nif (window.__trkTaskCardFixV105) return;\nwindow.__trkTaskCardFixV105 = true;\n\nfunction _moveBadges() {\n    var list = document.getElementById('tasksFullList');\n    if (!list) return;\n\n    list.querySelectorAll('.task-card').forEach(function(card){\n        var head = card.querySelector('.task-card-head');\n        var topRight = card.querySelector('.task-card-topright');\n        var mid = card.querySelector('.task-card-mid');\n\n        // Если бейджи есть и они лежат в шапке\n        if (head && topRight && topRight.parentNode === head) {\n            // Удаляем класс, чтобы CSS не пытался его растянуть в шапке\n            topRight.classList.remove('task-card-topright');\n            topRight.classList.add('task-card-badges-below');\n\n            // Вставляем после шапки (или после блока с датами, если он есть)\n            if (mid) {\n                mid.parentNode.insertBefore(topRight, mid.nextSibling);\n            } else {\n                head.parentNode.insertBefore(topRight, head.nextSibling);\n            }\n        }\n    });\n}\n\n// Хук на рендер списка\n(function(){\n    function _hook() {\n        if (typeof window.__trkRenderTasksFull !== 'function') return;\n        if (window.__trkRenderTasksFull._v105safe) return;\n        var orig = window.__trkRenderTasksFull;\n        var wrapped = function(){\n            var r = orig.apply(this, arguments);\n            setTimeout(_moveBadges, 40);\n            return r;\n        };\n        wrapped._v105safe = true;\n        window.__trkRenderTasksFull = wrapped;\n    }\n    _hook();\n    setTimeout(_hook, 500);\n    setTimeout(_hook, 1500);\n})();\n\n// Наблюдатель на случай прямых манипуляций\nsetTimeout(function(){\n    var list = document.getElementById('tasksFullList');\n    if (!list) return;\n    new MutationObserver(function(){\n        setTimeout(_moveBadges, 30);\n    }).observe(list, { childList: true });\n    setTimeout(_moveBadges, 200);\n}, 700);\n\n})();\n"
+    },
+
+    {
+      "type": "append",
+      "path": "static/app.css",
+      "idempotent": true,
+      "content": "\n\n/* Стиль для бейджей, перенесённых вниз */\n.tasks-grid .task-card-badges-below {\n    display: flex !important;\n    flex-wrap: wrap !important;\n    align-items: center !important;\n    gap: 6px !important;\n    margin-top: 6px !important;\n    width: 100% !important;\n}\n"
+    }
+
+  ]
+}

@@ -1,0 +1,73 @@
+{
+  "id": "1.0.9",
+  "target_version": "1.0.9",
+  "independent": true,
+  "description": "Автообновление (опционально). Модалка с описанием изменений при обнаружении патчей. Чекбокс 'Автоматически устанавливать'. При включении: apply + restart без участия пользователя.",
+  "requires": [],
+  "operations": [
+
+    {
+      "type": "insert",
+      "path": "plugins/updater.py",
+      "position": "before",
+      "marker": "    @app.route('/api/plugins/updater/check', methods=['POST'])",
+      "optional": true,
+      "idempotent": true,
+      "content": "    @app.route('/api/plugins/updater/settings', methods=['GET'])\n    def _up_get_settings():\n        try:\n            u = _auth_ok(db)\n            if not u: return jsonify({'success': False, 'error': 'forbidden'}), 403\n            auto = db.get_setting('updater_auto_update', '0')\n            return jsonify({'success': True, 'auto_update': auto == '1'})\n        except Exception as e:\n            return jsonify({'success': False, 'error': str(e)}), 500\n\n    @app.route('/api/plugins/updater/settings', methods=['POST'])\n    def _up_set_settings():\n        try:\n            u = _auth_ok(db)\n            if not u: return jsonify({'success': False, 'error': 'forbidden'}), 403\n            body = request.get_json() or {}\n            if 'auto_update' in body:\n                db.set_setting('updater_auto_update', '1' if body['auto_update'] else '0')\n            return jsonify({'success': True})\n        except Exception as e:\n            return jsonify({'success': False, 'error': str(e)}), 500\n\n"
+    },
+
+    {
+      "type": "insert",
+      "path": "plugins/updater.py",
+      "position": "before",
+      "marker": "<div class=\"modal-overlay\" id=\"restartModal\">",
+      "optional": true,
+      "idempotent": true,
+      "content": "<div class=\"modal-overlay\" id=\"updaterCheckModal\">\n    <div class=\"modal-box\">\n        <h2 class=\"warn\" style=\"display:flex; align-items:center; gap:10px;\"><span style=\"font-size:1.7rem;\">⬆</span> Доступно обновление</h2>\n        <div class=\"modal-body\" id=\"ucBody\"></div>\n        <div style=\"margin-top:16px; padding:10px; background:var(--pg-inner-bg); border-radius:8px; display:flex; align-items:center; gap:8px;\">\n            <input type=\"checkbox\" id=\"ucAutoUpdate\" style=\"width:16px; height:16px; accent-color:var(--pg-accent); cursor:pointer;\">\n            <label for=\"ucAutoUpdate\" style=\"font-size:0.85rem; color:var(--pg-text); cursor:pointer; margin:0;\">Автоматически устанавливать обновления без подтверждения</label>\n        </div>\n        <div class=\"modal-actions\">\n            <button class=\"btn btn-secondary\" id=\"ucCancelBtn\">Не сейчас</button>\n            <button class=\"btn btn-primary\" id=\"ucApplyBtn\">Обновить сейчас</button>\n        </div>\n    </div>\n</div>\n\n"
+    },
+
+    {
+      "type": "replace",
+      "path": "plugins/updater.py",
+      "find": "function doCheck(){\n    var btn = document.getElementById('btnCheck');\n    btn.disabled = true;\n    document.getElementById('checkResult').style.display = '';\n    document.getElementById('checkBody').innerHTML = '<div class=\"loading\">Проверка…</div>';\n    document.getElementById('logBody').style.display = 'none';\n    document.getElementById('btnApply').disabled = true;\n    fetch('/api/plugins/updater/check', {",
+      "content": "var _settings = { auto_update: false };\nfunction _loadSettings() {\n    return fetch('/api/plugins/updater/settings', {credentials: 'same-origin'})\n        .then(function(r){ return r.json(); })\n        .then(function(d){\n            if (d && d.success) {\n                _settings.auto_update = d.auto_update;\n                var cb = document.getElementById('ucAutoUpdate');\n                if (cb) cb.checked = d.auto_update;\n            }\n        }).catch(function(){});\n}\n\nfunction showUpdateFound(d) {\n    var body = document.getElementById('ucBody');\n    var html = '<p>Найдены новые патчи, которые можно применить:</p><ul style=\"margin:10px 0 0 20px; font-size:0.85rem; line-height:1.5;\">';\n    (d.pending || []).forEach(function(p) {\n        html += '<li><b>' + esc(p.id) + '</b> — ' + esc(p.description || 'Нет описания') + '</li>';\n    });\n    html += '</ul>';\n    body.innerHTML = html;\n    \n    var modal = document.getElementById('updaterCheckModal');\n    modal.classList.add('active');\n    \n    document.getElementById('ucApplyBtn').onclick = function() {\n        modal.classList.remove('active');\n        doApply(false);\n    };\n    document.getElementById('ucCancelBtn').onclick = function() {\n        modal.classList.remove('active');\n    };\n}\n\ndocument.getElementById('ucAutoUpdate').addEventListener('change', function(){\n    var val = this.checked;\n    _settings.auto_update = val;\n    fetch('/api/plugins/updater/settings', {\n        method: 'POST', credentials: 'same-origin',\n        headers: {'Content-Type': 'application/json', 'X-CSRF-Token': _csrf()},\n        body: JSON.stringify({auto_update: val})\n    }).catch(function(){});\n});\n\nfunction doCheck(isAutoCheck){\n    var btn = document.getElementById('btnCheck');\n    if (!isAutoCheck && btn) {\n        btn.disabled = true;\n        document.getElementById('checkResult').style.display = '';\n        document.getElementById('checkBody').innerHTML = '<div class=\"loading\">Проверка…</div>';\n        document.getElementById('logBody').style.display = 'none';\n        document.getElementById('btnApply').disabled = true;\n    }\n    fetch('/api/plugins/updater/check', {"
+    },
+
+    {
+      "type": "replace",
+      "path": "plugins/updater.py",
+      "find": "    .then(function(d){\n        btn.disabled = false;\n        if (!d.success) {\n            document.getElementById('checkBody').innerHTML = '<div class=\"empty\" style=\"color:var(--pg-err);\">✗ ' + esc(d.error || 'ошибка') + '</div>';\n            return;\n        }\n        renderCheck(d);\n        renderBanner(d);\n        renderStatus(d);\n        renderChainWarning(d);\n    })",
+      "content": "    .then(function(d){\n        if (!isAutoCheck && btn) btn.disabled = false;\n        if (!d.success) {\n            if (!isAutoCheck) document.getElementById('checkBody').innerHTML = '<div class=\"empty\" style=\"color:var(--pg-err);\">✗ ' + esc(d.error || 'ошибка') + '</div>';\n            return;\n        }\n        renderCheck(d);\n        renderBanner(d);\n        renderStatus(d);\n        renderChainWarning(d);\n\n        if (d.pending && d.pending.length > 0) {\n            var allOk = (d.verified || []).every(function(v) { return v.ok; });\n            var dryOk = d.dry_run && d.dry_run.rc_ok;\n            \n            if (_settings.auto_update && allOk && dryOk) {\n                showModal('warn', 'Автообновление', '<p>Найдены обновления. Запуск установки...</p><div style=\"text-align:center;padding:20px;\"><span class=\"up-spinner\"></span></div>');\n                setTimeout(function(){ doApply(true); }, 1000);\n            } else {\n                showUpdateFound(d);\n            }\n        }\n    })"
+    },
+
+    {
+      "type": "replace",
+      "path": "plugins/updater.py",
+      "find": "function doApply(){\n    if (!confirm('Применить обновление?\\n\\nПатчи будут внесены в файлы проекта.\\nПосле применения потребуется перезапустить сервер.')) return;\n    var btn = document.getElementById('btnApply');\n    btn.disabled = true;\n    document.getElementById('checkBody').innerHTML = '<div class=\"loading\">Применение…</div>';",
+      "content": "function doApply(silent){\n    if (!silent && !confirm('Применить обновление?\\n\\nПатчи будут внесены в файлы проекта.\\nПосле применения потребуется перезагрузить сервер.')) return;\n    var btn = document.getElementById('btnApply');\n    if (!silent && btn) btn.disabled = true;\n    if (!silent) document.getElementById('checkBody').innerHTML = '<div class=\"loading\">Применение…</div>';"
+    },
+
+    {
+      "type": "replace",
+      "path": "plugins/updater.py",
+      "find": "    .then(function(d){\n        if (!d.success) {\n            showModal('err', 'Ошибка применения', '<p>' + esc(d.error || '') + '</p>'\n                + (d.output ? '<div class=\"log-box\">' + esc(d.output) + '</div>' : ''));\n            return;\n        }\n        showModal('ok', 'Обновление применено',\n            '<p>Применено патчей: <span class=\"hl\">' + (d.applied_count || 0) + '</span></p>'\n            + '<p>Новая версия: <span class=\"hl\">' + esc(d.new_version || '?') + '</span></p>'\n            + '<p style=\"margin-top:14px;\">Файлы обновлены. Для применения изменений необходимо перезагрузить сервер.</p>',\n            '<button class=\"btn btn-primary\" id=\"btnRestartServer\">🔄 Перезагрузить сервер</button>');\n        loadStatus();\n    })",
+      "content": "    .then(function(d){\n        if (!d.success) {\n            showModal('err', 'Ошибка применения', '<p>' + esc(d.error || '') + '</p>'\n                + (d.output ? '<div class=\"log-box\">' + esc(d.output) + '</div>' : ''));\n            return;\n        }\n        if (silent) {\n            showModal('warn', 'Сервер перезагружается', '<p>Обновление применено. Ожидайте восстановления соединения...</p><div style=\"text-align:center;padding:20px;\"><span class=\"up-spinner\"></span></div>');\n            _doRestart();\n        } else {\n            showModal('ok', 'Обновление применено',\n                '<p>Применено патчей: <span class=\"hl\">' + (d.applied_count || 0) + '</span></p>'\n                + '<p>Новая версия: <span class=\"hl\">' + esc(d.new_version || '?') + '</span></p>'\n                + '<p style=\"margin-top:14px;\">Файлы обновлены. Для применения изменений необходимо перезагрузить сервер.</p>',\n                '<button class=\"btn btn-primary\" id=\"btnRestartServer\">🔄 Перезагрузить сервер</button>');\n            loadStatus();\n        }\n    })"
+    },
+
+    {
+      "type": "replace",
+      "path": "plugins/updater.py",
+      "find": "document.getElementById('restartModal').addEventListener('click', function(e){\n    if (e.target === this || (e.target.closest && e.target.closest('[data-close=\"1\"]'))) {\n        this.classList.remove('active');\n        return;\n    }\n    \n    var btnRestart = e.target.closest && e.target.closest('#btnRestartServer');\n    if (btnRestart) {\n        btnRestart.disabled = true;\n        btnRestart.textContent = '⏳ Перезагрузка...';\n        \n        fetch('/api/settings/restart', {\n            method: 'POST', credentials: 'same-origin',\n            headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': _csrf() }\n        }).then(function(r){ return r.json(); }).then(function(d){\n            if (d.success) {\n                showModal('warn', 'Сервер перезагружается', '<p>Ожидайте восстановления соединения...</p><div style=\"text-align:center;padding:20px;\"><span class=\"up-spinner\"></span></div>');\n                var attempts = 0;\n                var iv = setInterval(function(){\n                    attempts++;\n                    fetch('/login', {method: 'HEAD', cache: 'no-store'})\n                        .then(function(){ \n                            clearInterval(iv); \n                            location.reload(); \n                        })\n                        .catch(function(){\n                            if (attempts > 20) {\n                                clearInterval(iv);\n                                showModal('err', 'Сервер остановлен', '<p>Пожалуйста, запустите <b>START.bat</b> заново.</p>');\n                            }\n                        });\n                }, 1000);\n            } else {\n                btnRestart.disabled = false;\n                btnRestart.textContent = '🔄 Перезагрузить сервер';\n                alert('Ошибка: ' + (d.error || 'неизвестна'));\n            }\n        }).catch(function(err){\n            btnRestart.disabled = false;\n            btnRestart.textContent = '🔄 Перезагрузить сервер';\n            alert('Ошибка соединения: ' + err.message);\n        });\n    }\n});",
+      "content": "function _doRestart() {\n    fetch('/api/settings/restart', {\n        method: 'POST', credentials: 'same-origin',\n        headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': _csrf() }\n    }).then(function(r){ return r.json(); }).then(function(d){\n        if (d.success) {\n            var attempts = 0;\n            var iv = setInterval(function(){\n                attempts++;\n                fetch('/login', {method: 'HEAD', cache: 'no-store'})\n                    .then(function(){ clearInterval(iv); location.reload(); })\n                    .catch(function(){\n                        if (attempts > 20) {\n                            clearInterval(iv);\n                            showModal('err', 'Сервер остановлен', '<p>Пожалуйста, запустите <b>START.bat</b> заново.</p>');\n                        }\n                    });\n            }, 1000);\n        } else {\n            alert('Ошибка: ' + (d.error || 'неизвестна'));\n        }\n    }).catch(function(err){\n        alert('Ошибка соединения: ' + err.message);\n    });\n}\n\ndocument.getElementById('restartModal').addEventListener('click', function(e){\n    if (e.target === this || (e.target.closest && e.target.closest('[data-close=\"1\"]'))) {\n        this.classList.remove('active');\n        return;\n    }\n    \n    var btnRestart = e.target.closest && e.target.closest('#btnRestartServer');\n    if (btnRestart) {\n        btnRestart.disabled = true;\n        btnRestart.textContent = '⏳ Перезагрузка...';\n        _doRestart();\n    }\n});"
+    },
+
+    {
+      "type": "replace",
+      "path": "plugins/updater.py",
+      "find": "loadStatus();\n\nif (!window.UPDATER_CAN_APPLY) {",
+      "content": "_loadSettings().then(function(){\n    doCheck(true);\n});\nloadStatus();\n\nif (!window.UPDATER_CAN_APPLY) {"
+    }
+
+  ]
+}
+

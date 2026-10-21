@@ -1,0 +1,63 @@
+{
+  "id": "1.0.8",
+  "target_version": "1.0.8",
+  "independent": true,
+  "description": "Автоперезапуск: цикл в START.bat (фикс пути /run.py и русского текста), кнопка 'Перезагрузить сервер' в плагине Обновления, эндпоинт рестарта.",
+  "requires": [],
+  "operations": [
+
+    {
+      "type": "replace",
+      "path": "../START.bat",
+      "find": "\"%PY%\" \"%CORE%\\run.py\"\n\necho.\necho Сервер остановлен.\npause\nendlocal\nexit /b 0",
+      "content": ":loop\n\"%PY%\" \"%CORE%/run.py\"\necho.\necho Сервер остановлен. Перезапуск через 3 секунды...\ntimeout /t 3 >nul\ngoto loop"
+    },
+
+    {
+      "type": "insert",
+      "path": "app.py",
+      "position": "before",
+      "marker": "    @app.route('/api/settings/db_backup', methods=['POST'])",
+      "optional": true,
+      "idempotent": true,
+      "content": "    @app.route('/api/settings/restart', methods=['POST'])\n    @login_required\n    def api_restart_server():\n        u = current_user(db)\n        if not (u.get('role') == 'admin' or user_has(db, u, 'tab.settings') or user_has(db, u, 'action.updater.apply')):\n            return jsonify({'success': False, 'error': 'forbidden'}), 403\n        import os\n        import threading\n        import time\n        def _do_exit():\n            time.sleep(0.6)\n            print('=' * 60)\n            print('[SERVER] Перезапуск по запросу администратора')\n            print('=' * 60)\n            os._exit(0)\n        threading.Thread(target=_do_exit, daemon=True).start()\n        _audit(db, current_user(db), 'update', 'server', 'restart', {})\n        return jsonify({'success': True, 'message': 'Сервер завершает работу'})\n\n"
+    },
+
+    {
+      "type": "replace",
+      "path": "plugins/updater.py",
+      "find": "        <div class=\"modal-actions\">\n            <button class=\"btn btn-primary\" id=\"btnCloseModal\">Понятно</button>\n        </div>",
+      "content": "        <div class=\"modal-actions\" id=\"modalActions\">\n            <button class=\"btn btn-primary\" data-close=\"1\">Понятно</button>\n        </div>"
+    },
+
+    {
+      "type": "replace",
+      "path": "plugins/updater.py",
+      "find": "function showModal(kind, title, html){\n    var m = document.getElementById('restartModal');\n    var h2 = document.getElementById('modalTitle');\n    var ic = document.getElementById('modalIcon');\n    var tt = document.getElementById('modalTitleText');\n    h2.className = kind;\n    ic.textContent = kind === 'ok' ? '✅' : (kind === 'err' ? '❌' : '⚠');\n    tt.textContent = title;\n    document.getElementById('modalBody').innerHTML = html;\n    m.classList.add('active');\n}",
+      "content": "function showModal(kind, title, html, actionsHtml){\n    var m = document.getElementById('restartModal');\n    var h2 = document.getElementById('modalTitle');\n    var ic = document.getElementById('modalIcon');\n    var tt = document.getElementById('modalTitleText');\n    h2.className = kind;\n    ic.textContent = kind === 'ok' ? '✅' : (kind === 'err' ? '❌' : '⚠');\n    tt.textContent = title;\n    document.getElementById('modalBody').innerHTML = html;\n    var actions = document.getElementById('modalActions');\n    if (actionsHtml) {\n        actions.innerHTML = actionsHtml;\n    } else {\n        actions.innerHTML = '<button class=\"btn btn-primary\" data-close=\"1\">Понятно</button>';\n    }\n    m.classList.add('active');\n}"
+    },
+
+    {
+      "type": "replace",
+      "path": "plugins/updater.py",
+      "find": "        showModal('ok', 'Обновление применено',\n            '<p>Применено патчей: <span class=\"hl\">' + (d.applied_count || 0) + '</span></p>'\n            + '<p>Новая версия: <span class=\"hl\">' + esc(d.new_version || '?') + '</span></p>'\n            + '<p style=\"margin-top:14px;\"><b>Перезапустите сервер:</b></p>'\n            + '<p style=\"margin:6px 0 0 0;color:var(--pg-meta);\">1) Ctrl+C в окне Flask</p>'\n            + '<p style=\"margin:2px 0 0 0;color:var(--pg-meta);\">2) Запустите START.bat заново</p>'\n            + '<p style=\"margin:2px 0 0 0;color:var(--pg-meta);\">3) В браузере Ctrl+Shift+R</p>');",
+      "content": "        showModal('ok', 'Обновление применено',\n            '<p>Применено патчей: <span class=\"hl\">' + (d.applied_count || 0) + '</span></p>'\n            + '<p>Новая версия: <span class=\"hl\">' + esc(d.new_version || '?') + '</span></p>'\n            + '<p style=\"margin-top:14px;\">Файлы обновлены. Для применения изменений необходимо перезагрузить сервер.</p>',\n            '<button class=\"btn btn-primary\" id=\"btnRestartServer\">🔄 Перезагрузить сервер</button>');"
+    },
+
+    {
+      "type": "replace",
+      "path": "plugins/updater.py",
+      "find": "        showModal('ok', 'Патч откачен',\n            '<p>Откачен патч: <span class=\"hl\">' + esc(d.rolled_back || pid) + '</span></p>'\n            + '<p>Новая версия: <span class=\"hl\">' + esc(d.new_version || '?') + '</span></p>'\n            + '<p style=\"margin-top:14px;\"><b>Перезапустите сервер</b>, чтобы изменения вступили в силу.</p>');",
+      "content": "        showModal('ok', 'Патч откачен',\n            '<p>Откачен патч: <span class=\"hl\">' + esc(d.rolled_back || pid) + '</span></p>'\n            + '<p>Новая версия: <span class=\"hl\">' + esc(d.new_version || '?') + '</span></p>'\n            + '<p style=\"margin-top:14px;\">Файлы восстановлены. Для применения изменений необходимо перезагрузить сервер.</p>',\n            '<button class=\"btn btn-primary\" id=\"btnRestartServer\">🔄 Перезагрузить сервер</button>');"
+    },
+
+    {
+      "type": "replace",
+      "path": "plugins/updater.py",
+      "find": "document.getElementById('btnCloseModal').addEventListener('click', function(){\n    document.getElementById('restartModal').classList.remove('active');\n});\ndocument.getElementById('restartModal').addEventListener('click', function(e){\n    if (e.target === this) this.classList.remove('active');\n});",
+      "content": "document.getElementById('restartModal').addEventListener('click', function(e){\n    if (e.target === this || (e.target.closest && e.target.closest('[data-close=\"1\"]'))) {\n        this.classList.remove('active');\n        return;\n    }\n    \n    var btnRestart = e.target.closest && e.target.closest('#btnRestartServer');\n    if (btnRestart) {\n        btnRestart.disabled = true;\n        btnRestart.textContent = '⏳ Перезагрузка...';\n        \n        fetch('/api/settings/restart', {\n            method: 'POST', credentials: 'same-origin',\n            headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': _csrf() }\n        }).then(function(r){ return r.json(); }).then(function(d){\n            if (d.success) {\n                showModal('warn', 'Сервер перезагружается', '<p>Ожидайте восстановления соединения...</p><div style=\"text-align:center;padding:20px;\"><span class=\"up-spinner\"></span></div>');\n                var attempts = 0;\n                var iv = setInterval(function(){\n                    attempts++;\n                    fetch('/login', {method: 'HEAD', cache: 'no-store'})\n                        .then(function(){ \n                            clearInterval(iv); \n                            location.reload(); \n                        })\n                        .catch(function(){\n                            if (attempts > 20) {\n                                clearInterval(iv);\n                                showModal('err', 'Сервер остановлен', '<p>Пожалуйста, запустите <b>START.bat</b> заново.</p>');\n                            }\n                        });\n                }, 1000);\n            } else {\n                btnRestart.disabled = false;\n                btnRestart.textContent = '🔄 Перезагрузить сервер';\n                alert('Ошибка: ' + (d.error || 'неизвестна'));\n            }\n        }).catch(function(err){\n            btnRestart.disabled = false;\n            btnRestart.textContent = '🔄 Перезагрузить сервер';\n            alert('Ошибка соединения: ' + err.message);\n        });\n    }\n});"
+    }
+
+  ]
+}
+

@@ -1,0 +1,31 @@
+{
+  "id": "1.0.18",
+  "target_version": "1.0.18",
+  "description": "Поле ЧАСЫ в формате ЧЧ:ММ: маска ввода (только цифры + ':', точка/запятая → ':'), авто-формат 08:00 при blur, ↑/↓ = ±15 мин, Shift+↑/↓ = ±1ч, _formatHoursInput всегда ЧЧ:ММ, _parseHoursInput понимает '8:15' / '8' / '815' / '8.25'. Совместим с патчем 1.0.17 (переопределяет его функции); если 1.0.17 не применился — работает независимо",
+  "requires": ["1.0.1"],
+  "operations": [
+
+    {
+      "type": "regex",
+      "path": "templates/tracker.html",
+      "pattern": "<input[^>]*id=\"log_hours\"[^>]*>",
+      "content": "<input type=\"text\" id=\"log_hours\" value=\"08:00\" placeholder=\"ЧЧ:ММ\" maxlength=\"5\" autocomplete=\"off\" inputmode=\"numeric\">"
+    },
+
+    {
+      "type": "append",
+      "path": "static/tracker.js",
+      "idempotent": true,
+      "content": "\n\n/* ============================================================\n   PATCH 1.0.18 — поле ЧАСЫ в формате ЧЧ:ММ\n   ============================================================ */\n(function(){\n'use strict';\nif (window.__trkHoursV1018) return;\nwindow.__trkHoursV1018 = true;\n\n// === Парсинг: \"8:15\" / \"08:15\" / \"815\" / \"8\" / \"8.25\" (десятичное) ===\nwindow._parseHoursInput = function(s) {\n    s = String(s == null ? '' : s).trim().replace(',', '.');\n    if (!s) return null;\n\n    // \"8:15\" / \"08:15\"\n    var m = s.match(/^(\\d{1,2})\\s*:\\s*(\\d{1,2})$/);\n    if (m) {\n        var h1 = parseInt(m[1], 10) || 0;\n        var mm1 = parseInt(m[2], 10) || 0;\n        if (mm1 > 59) mm1 = 59;\n        if (h1 > 24) h1 = 24;\n        if (h1 === 24) mm1 = 0;\n        return Math.round((h1 + mm1 / 60) * 100) / 100;\n    }\n\n    // \"815\" / \"0815\" (4 цифры = ЧЧММ)\n    if (/^\\d{4}$/.test(s)) {\n        var hh2 = parseInt(s.slice(0, 2), 10) || 0;\n        var mm2 = parseInt(s.slice(2), 10) || 0;\n        if (mm2 > 59) mm2 = 59;\n        if (hh2 > 24) hh2 = 24;\n        if (hh2 === 24) mm2 = 0;\n        return Math.round((hh2 + mm2 / 60) * 100) / 100;\n    }\n\n    // \"815\" (3 цифры) — трактуем как \"8:15\"\n    if (/^\\d{3}$/.test(s)) {\n        var hh3 = parseInt(s[0], 10) || 0;\n        var mm3 = parseInt(s.slice(1), 10) || 0;\n        if (mm3 > 59) mm3 = 59;\n        return Math.round((hh3 + mm3 / 60) * 100) / 100;\n    }\n\n    // \"8\" / \"15\" (1-2 цифры) — это часы\n    if (/^\\d{1,2}$/.test(s)) {\n        var hh4 = parseInt(s, 10) || 0;\n        if (hh4 > 24) hh4 = 24;\n        return hh4;\n    }\n\n    // Fallback: десятичное \"8.25\"\n    var n = parseFloat(s);\n    if (isNaN(n)) return null;\n    if (n < 0) n = 0;\n    if (n > 24) n = 24;\n    return n;\n};\n\n// === Формат: всегда \"ЧЧ:ММ\", clamp [0; 24] ===\nwindow._formatHoursInput = function(h) {\n    h = Number(h) || 0;\n    if (h < 0) h = 0;\n    if (h >= 24) return '24:00';\n    var totalMin = Math.round(h * 60);\n    if (totalMin >= 24 * 60) return '24:00';\n    var hh = Math.floor(totalMin / 60);\n    var mm = totalMin - hh * 60;\n    return (hh < 10 ? '0' : '') + hh + ':' + (mm < 10 ? '0' : '') + mm;\n};\n\n// === Маска ввода ===\nfunction _attachMask(el){\n    if (!el || el._hoursMaskV1018) return;\n    el._hoursMaskV1018 = true;\n\n    el.addEventListener('input', function(){\n        var v = this.value;\n        // . , → :\n        v = v.replace(/[.,]/g, ':');\n        // Только цифры и :\n        v = v.replace(/[^\\d:]/g, '');\n        // Оставить только первое двоеточие\n        var idx = v.indexOf(':');\n        if (idx !== -1) {\n            v = v.slice(0, idx + 1) + v.slice(idx + 1).replace(/:/g, '');\n        }\n        // Не больше 5 символов (ЧЧ:ММ)\n        if (v.length > 5) v = v.slice(0, 5);\n        if (this.value !== v) this.value = v;\n    });\n\n    el.addEventListener('blur', function(){\n        var v = window._parseHoursInput(this.value);\n        if (v !== null && !isNaN(v)) {\n            this.value = window._formatHoursInput(v);\n        }\n    });\n\n    el.addEventListener('keydown', function(e){\n        if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {\n            e.preventDefault();\n            var v = window._parseHoursInput(this.value);\n            if (v === null || isNaN(v)) v = 0;\n            var step = e.shiftKey ? 1 : 0.25;\n            if (e.key === 'ArrowDown') step = -step;\n            v = Math.max(0, Math.min(24, v + step));\n            this.value = window._formatHoursInput(v);\n            try { this.dispatchEvent(new Event('input', {bubbles: true})); } catch(err){}\n        }\n    });\n}\n\n// === Навесить на существующее поле + на все переоткрытия модалки ===\nfunction _attachToLogHours(){\n    var el = document.getElementById('log_hours');\n    if (el) {\n        _attachMask(el);\n        // Если поле пустое (например, из-за кэшированного HTML) — поставим дефолт\n        if (!el.value) el.value = '08:00';\n    }\n}\n_attachToLogHours();\nsetTimeout(_attachToLogHours, 300);\nsetTimeout(_attachToLogHours, 1000);\n\n// Наблюдатель на logModal — если HTML был заменён рендером\n(function _obs(){\n    var lm = document.getElementById('logModal');\n    if (!lm || lm._hoursObsV1018) return;\n    lm._hoursObsV1018 = true;\n    new MutationObserver(function(){\n        if (lm.classList.contains('active')) _attachToLogHours();\n    }).observe(lm, { attributes: true, attributeFilter: ['class'] });\n})();\n\n})();\n"
+    },
+
+    {
+      "type": "append",
+      "path": "static/app.css",
+      "idempotent": true,
+      "content": "\n\n/* ============================================================\n   PATCH 1.0.18 — поле ЧАСЫ в формате ЧЧ:ММ\n   ============================================================ */\n#logModal #log_hours,\n#log_hours {\n    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace !important;\n    text-align: center !important;\n    letter-spacing: 1px !important;\n    font-variant-numeric: tabular-nums;\n}\n#logModal #log_hours::placeholder {\n    letter-spacing: 0.5px;\n    opacity: 0.55;\n}\n"
+    }
+
+  ]
+}
+

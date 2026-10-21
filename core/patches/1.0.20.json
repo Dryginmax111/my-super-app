@@ -1,0 +1,15 @@
+{
+  "id": "1.0.20",
+  "target_version": "1.0.20",
+  "description": "Пересчёт подсказки под полем ЧАСЫ после программной установки умолчания по норме дня. НЕзависимый observer на #logModal (500/900мс после открытия) — срабатывает ПОСЛЕ 1.0.19 (30/150/400мс), диспатчит input → updateDayHoursSummary пересчитывает planned с актуальным значением поля. При смене даты — 200/500мс. Не трогает если пользователь ввёл сам. Работает и без 1.0.19",
+  "requires": ["1.0.1"],
+  "operations": [
+    {
+      "type": "append",
+      "path": "static/tracker.js",
+      "idempotent": true,
+      "content": "\n\n/* ============================================================\n   PATCH 1.0.20 (v2) — пересчёт подсказки после установки умолчания\n   НЕ оборачивает _applyDefaultHours (observer 1.0.19 её не вызывает через window).\n   Вместо этого — независимый observer на 500/900мс (после 1.0.19 30/150/400мс).\n   ============================================================ */\n(function(){\n'use strict';\nif (window.__trkHoursSyncV1020b) return;\nwindow.__trkHoursSyncV1020b = true;\n\nfunction _syncSummary() {\n    var lh = document.getElementById('log_hours');\n    if (!lh) return;\n    // Не трогаем при редактировании\n    var lid = document.getElementById('log_id');\n    if (lid && lid.value) return;\n    // Не трогаем, если пользователь ввёл сам\n    if (lh._userTouchedHours) return;\n    // Диспатчим input — updateDayHoursSummary пересчитает planned\n    try {\n        lh.dispatchEvent(new Event('input', { bubbles: true }));\n    } catch (e) {}\n    // 1.0.19 ставит _userTouchedHours = true на каждый input (в т.ч. программный).\n    // Сбрасываем, чтобы следующая смена даты / открытие снова пересчитало.\n    lh._userTouchedHours = false;\n}\n\n(function _watchOpen(){\n    var lm = document.getElementById('logModal');\n    if (!lm || lm._hoursSyncV1020b) return;\n    lm._hoursSyncV1020b = true;\n    new MutationObserver(function(){\n        if (lm.classList.contains('active')) {\n            // Сброс флага при открытии (1.0.19 тоже сбрасывает, но на случай его отсутствия)\n            var lh0 = document.getElementById('log_hours');\n            if (lh0) lh0._userTouchedHours = false;\n            // 1.0.19: 30/150/400мс. Мы: 500/900мс — после него.\n            setTimeout(_syncSummary, 500);\n            setTimeout(_syncSummary, 900);\n        }\n    }).observe(lm, { attributes: true, attributeFilter: ['class'] });\n})();\n\ndocument.addEventListener('change', function(e){\n    if (!e.target || e.target.id !== 'log_date') return;\n    setTimeout(_syncSummary, 200);\n    setTimeout(_syncSummary, 500);\n}, true);\n\nsetTimeout(_syncSummary, 1200);\n\n})();\n"
+    }
+  ]
+}
+

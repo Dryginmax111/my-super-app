@@ -1,0 +1,15 @@
+{
+  "id": "1.0.16",
+  "target_version": "1.0.16",
+  "description": "Календарь: маркер ⚠ просрочки показывается только для задач тех сотрудников, кого пользователь вправе видеть. Приоритет: если в фильтре задан employee — только его задачи (даже для админа); иначе если нет права block.calendar.other_employees — только свои; иначе — все. Остальные маркеры (missing, vacation, remote, not_started, .missing, cal-badge-emps) уже фильтруются через emps по emp_filter. Миграций БД нет",
+  "requires": ["1.0.1"],
+  "operations": [
+    {
+      "type": "replace",
+      "path": "app.py",
+      "find": "        for t in data['tasks']:\n            if not _is_overdue(t, today):\n                continue\n            dl = t.get('deadline', '')\n            if dl in days:\n                days[dl]['overdue_tasks'].append({\n                    'id': t['id'], 'name': t.get('name', ''), 'icon': t.get('icon', '📋'),\n                })",
+      "content": "        # PATCH 1.0.16 (v2): ⚠ и .has-overdue показываем только тем, кто вправе видеть задачу.\n        # Приоритет: emp_filter → только он; иначе нет прав на чужих → только свои; иначе — все.\n        _can_see_others = bool(perms.get('block.calendar.other_employees'))\n        _my_emp_v = (u.get('employee_id') or '').strip()\n        _visible_emp_ids = None\n        if emp_filter:\n            if (not _can_see_others) and emp_filter != _my_emp_v:\n                _visible_emp_ids = set()\n            else:\n                _visible_emp_ids = {emp_filter}\n        elif not _can_see_others:\n            _visible_emp_ids = {_my_emp_v} if _my_emp_v else set()\n        for t in data['tasks']:\n            if not _is_overdue(t, today):\n                continue\n            if _visible_emp_ids is not None:\n                _asg = set(t.get('assignees') or [])\n                if not (_asg & _visible_emp_ids):\n                    continue\n            dl = t.get('deadline', '')\n            if dl in days:\n                days[dl]['overdue_tasks'].append({\n                    'id': t['id'], 'name': t.get('name', ''), 'icon': t.get('icon', '📋'),\n                })"
+    }
+  ]
+}
+

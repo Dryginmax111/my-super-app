@@ -1,0 +1,190 @@
+{
+  "id": "1.0.17",
+  "target_version": "1.0.17",
+  "description": "Гибкий график: настройка work_schedule_mode (legacy 8x5 / extended Пн-Чт 8:15, Пт 7:45); лимит по норме дня вместо жёстких 8ч; работа в выходной/праздник = overflow с отдельным диалогом; формат ввода часов '8:15' вместо '8.25'; пересчёт норм в capacity/my_week/weekly_summary. Миграций БД нет — work_logs хранит только hours, нормы вычисляются на лету",
+  "requires": ["1.0.1"],
+  "operations": [
+
+    {
+      "type": "insert",
+      "path": "app.py",
+      "position": "before",
+      "marker": "def _audit(db, user, kind, entity='', entity_id='', details=None):",
+      "optional": true,
+      "idempotent": true,
+      "content": "# PATCH 1.0.17 — нормы рабочего дня\nLEGACY_NORMS = {0: 8.0, 1: 8.0, 2: 8.0, 3: 8.0, 4: 8.0, 5: 0.0, 6: 0.0}\nEXTENDED_NORMS = {0: 8.25, 1: 8.25, 2: 8.25, 3: 8.25, 4: 7.75, 5: 0.0, 6: 0.0}\n\n\ndef _day_norm_hours(dk, schedule_mode, holidays):\n    try:\n        wd = datetime.strptime(dk, '%Y-%m-%d').weekday()\n    except Exception:\n        return 8.0\n    if holidays and dk in holidays:\n        return 0.0\n    norms = EXTENDED_NORMS if schedule_mode == 'extended' else LEGACY_NORMS\n    return norms.get(wd, 0.0)\n\n\n"
+    },
+
+    {
+      "type": "replace",
+      "path": "app.py",
+      "find": "def _day_meta(all_days, holidays_map, today):\n    out = {}\n    for dk in all_days:\n        try:\n            wd = datetime.strptime(dk, '%Y-%m-%d').weekday()\n        except Exception:\n            wd = 0\n        is_wknd = wd >= 5\n        is_hol = dk in holidays_map\n        out[dk] = {\n            'date': dk, 'weekday': wd,\n            'is_weekend': is_wknd, 'is_holiday': bool(is_hol),\n            'holiday_name': holidays_map.get(dk, ''),\n            'is_today': dk == today,\n            'is_workday': not (is_wknd or is_hol),\n        }\n    return out",
+      "content": "def _day_meta(all_days, holidays_map, today, schedule_mode='legacy'):\n    out = {}\n    for dk in all_days:\n        try:\n            wd = datetime.strptime(dk, '%Y-%m-%d').weekday()\n        except Exception:\n            wd = 0\n        is_wknd = wd >= 5\n        is_hol = dk in holidays_map\n        if is_wknd or is_hol:\n            day_norm = 0.0\n        elif schedule_mode == 'extended':\n            day_norm = 7.75 if wd == 4 else 8.25\n        else:\n            day_norm = 8.0\n        out[dk] = {\n            'date': dk, 'weekday': wd,\n            'is_weekend': is_wknd, 'is_holiday': bool(is_hol),\n            'holiday_name': holidays_map.get(dk, ''),\n            'is_today': dk == today,\n            'is_workday': not (is_wknd or is_hol),\n            'day_norm': day_norm,\n        }\n    return out"
+    },
+
+    {
+      "type": "replace",
+      "path": "app.py",
+      "find": "            'day_meta': _day_meta(all_days, holidays, today),",
+      "content": "            'day_meta': _day_meta(all_days, holidays, today, db.get_setting('work_schedule_mode', 'legacy')),"
+    },
+
+    {
+      "type": "replace",
+      "path": "app.py",
+      "find": "            days[dk] = {\n                'date': dk, 'in_month': (cur.month == m and cur.year == y),\n                'weekday': cur.weekday(),\n                'is_workday': (cur.weekday() in WORK_WEEKDAYS) and not is_hol,\n                'is_weekend': is_wknd, 'is_holiday': bool(is_hol),\n                'holiday_name': holidays.get(dk, ''),\n                'entries': [], 'total_hours': 0.0,\n                'employees': [], 'missing': [], 'vacation': vac, 'remote': rem,\n                'overdue_tasks': [], 'not_started': [],\n            }",
+      "content": "            _cal_mode = db.get_setting('work_schedule_mode', 'legacy')\n            _cal_wd = cur.weekday()\n            if is_wknd or is_hol:\n                _cal_norm = 0.0\n            elif _cal_mode == 'extended':\n                _cal_norm = 7.75 if _cal_wd == 4 else 8.25\n            else:\n                _cal_norm = 8.0\n            days[dk] = {\n                'date': dk, 'in_month': (cur.month == m and cur.year == y),\n                'weekday': _cal_wd,\n                'is_workday': (_cal_wd in WORK_WEEKDAYS) and not is_hol,\n                'is_weekend': is_wknd, 'is_holiday': bool(is_hol),\n                'holiday_name': holidays.get(dk, ''),\n                'day_norm': _cal_norm,\n                'entries': [], 'total_hours': 0.0,\n                'employees': [], 'missing': [], 'vacation': vac, 'remote': rem,\n                'overdue_tasks': [], 'not_started': [],\n            }"
+    },
+
+    {
+      "type": "replace",
+      "path": "app.py",
+      "find": "        if hours > 0:\n            _existing = db.query(\n                'SELECT id, task_id, hours FROM work_logs WHERE employee_id=? AND date=?',\n                (employee_id, date_str)\n            )\n            if log_id_raw:\n                _cur_id = int(log_id_raw)\n                _existing = [r for r in _existing if r['id'] != _cur_id]\n            _sum_existing = sum(float(r.get('hours') or 0) for r in _existing)\n            if _sum_existing + hours > 8 + 1e-6:",
+      "content": "        if hours > 0:\n            _existing = db.query(\n                'SELECT id, task_id, hours FROM work_logs WHERE employee_id=? AND date=?',\n                (employee_id, date_str)\n            )\n            if log_id_raw:\n                _cur_id = int(log_id_raw)\n                _existing = [r for r in _existing if r['id'] != _cur_id]\n            _sum_existing = sum(float(r.get('hours') or 0) for r in _existing)\n            # PATCH 1.0.17: лимит по норме дня, а не жёсткие 8ч\n            try:\n                _wd_save = datetime.strptime(date_str, '%Y-%m-%d').weekday()\n            except Exception:\n                _wd_save = 0\n            _is_holiday_save = bool(db.query_one('SELECT 1 FROM holidays WHERE date=?', (date_str,)))\n            _is_weekend_save = _wd_save >= 5\n            _sched_save = db.get_setting('work_schedule_mode', 'legacy')\n            if _is_holiday_save or _is_weekend_save:\n                _day_norm_save = 0.0\n            elif _sched_save == 'extended':\n                _day_norm_save = 7.75 if _wd_save == 4 else 8.25\n            else:\n                _day_norm_save = 8.0\n            if _sum_existing + hours > _day_norm_save + 1e-6:"
+    },
+
+    {
+      "type": "replace",
+      "path": "app.py",
+      "find": "                _existing_pos = [r for r in _existing if float(r.get('hours') or 0) > 0]\n                    _all_hours = [float(r.get('hours') or 0) for r in _existing_pos] + [hours]\n                    _n = len(_all_hours)\n                    if _n >= 1:\n                        _target = round((8.0 / _n) * 4) / 4\n                        if _target < 0.5:\n                            _target = 0.5\n                        _last_val = round((8.0 - _target * (_n - 1)) * 4) / 4\n                        if _last_val < 0.5:\n                            _last_val = 0.5",
+      "content": "                _existing_pos = [r for r in _existing if float(r.get('hours') or 0) > 0]\n                    _all_hours = [float(r.get('hours') or 0) for r in _existing_pos] + [hours]\n                    _n = len(_all_hours)\n                    if _n >= 1 and _day_norm_save > 0:\n                        _target = round((_day_norm_save / _n) * 4) / 4\n                        if _target < 0.5:\n                            _target = 0.5\n                        _last_val = round((_day_norm_save - _target * (_n - 1)) * 4) / 4\n                        if _last_val < 0.5:\n                            _last_val = 0.5",
+      "optional": true
+    },
+
+    {
+      "type": "replace",
+      "path": "app.py",
+      "find": "            else:\n                    return jsonify({\n                        'success': False,\n                        'error': 'daily_overflow',\n                        'sum_existing': round(_sum_existing * 4) / 4,\n                        'new_hours': hours,\n                        'total': round((_sum_existing + hours) * 4) / 4,\n                        'message': 'Превышение 8 часов за день',\n                    }), 409",
+      "content": "            else:\n                    _msg_ovf = 'Работа в выходной/праздник' if (_is_weekend_save or _is_holiday_save) else 'Превышение нормы дня'\n                    return jsonify({\n                        'success': False,\n                        'error': 'daily_overflow',\n                        'sum_existing': round(_sum_existing * 4) / 4,\n                        'new_hours': hours,\n                        'total': round((_sum_existing + hours) * 4) / 4,\n                        'day_norm': _day_norm_save,\n                        'is_weekend': _is_weekend_save,\n                        'is_holiday': _is_holiday_save,\n                        'message': _msg_ovf,\n                    }), 409",
+      "optional": true
+    },
+
+    {
+      "type": "insert",
+      "path": "app.py",
+      "position": "before",
+      "marker": "    @app.route('/api/settings/stats_ignore_future', methods=['GET'])",
+      "optional": true,
+      "idempotent": true,
+      "content": "    @app.route('/api/settings/work_schedule', methods=['GET'])\n    @login_required\n    @permission_required('tab.settings')\n    def api_get_work_schedule():\n        mode = db.get_setting('work_schedule_mode', 'legacy')\n        return jsonify({'success': True, 'mode': mode})\n\n    @app.route('/api/settings/work_schedule', methods=['POST'])\n    @login_required\n    @permission_required('tab.settings')\n    def api_set_work_schedule():\n        body = request.get_json() or {}\n        mode = str(body.get('mode', 'legacy')).strip()\n        if mode not in ('legacy', 'extended'):\n            return jsonify({'success': False, 'error': 'bad mode'}), 400\n        db.set_setting('work_schedule_mode', mode)\n        _audit(db, current_user(db), 'update', 'config', 'work_schedule_mode', {'mode': mode})\n        return jsonify({'success': True, 'mode': mode})\n\n"
+    },
+
+    {
+      "type": "replace",
+      "path": "app.py",
+      "find": "            'permissions': perms,\n            'current_user': {",
+      "content": "            'work_schedule': db.get_setting('work_schedule_mode', 'legacy'),\n            'permissions': perms,\n            'current_user': {"
+    },
+
+    {
+      "type": "replace",
+      "path": "plugins/capacity.py",
+      "find": "def _employee_capacity_days(e, d1_iso, d2_iso, holidays):\n    \"\"\"Рабочие дни сотрудника в интервале с учётом праздников, отпусков, найма/увольнения.\"\"\"\n    hired = (e.get('hired_date') or '').strip()\n    fired = (e.get('fired_date') or '').strip() if e.get('fired') else ''\n    start_iso = d1_iso\n    end_iso = d2_iso\n    if hired and hired > start_iso:\n        start_iso = hired\n    if fired and fired < end_iso:\n        end_iso = fired\n    if start_iso > end_iso:\n        return 0\n    # Отпуска/больничные/командировки\n    absence_dates = set()\n    for v in (e.get('vacations') or []):\n        vt = v.get('type') or 'vacation'\n        if vt == 'remote':\n            continue\n        vf = v.get('from') or ''\n        vto = v.get('to') or ''\n        if not vf or not vto:\n            continue\n        s = max(vf, start_iso)\n        en = min(vto, end_iso)\n        if s > en:\n            continue\n        try:\n            cur = datetime.strptime(s, '%Y-%m-%d').date()\n            end = datetime.strptime(en, '%Y-%m-%d').date()\n            while cur <= end:\n                iso = cur.strftime('%Y-%m-%d')\n                if cur.weekday() < 5 and iso not in holidays:\n                    absence_dates.add(iso)\n                cur += timedelta(days=1)\n        except Exception:\n            pass\n    try:\n        start = datetime.strptime(start_iso, '%Y-%m-%d').date()\n        end = datetime.strptime(end_iso, '%Y-%m-%d').date()\n    except Exception:\n        return 0\n    n = 0\n    cur = start\n    while cur <= end:\n        iso = cur.strftime('%Y-%m-%d')\n        if cur.weekday() < 5 and iso not in holidays and iso not in absence_dates:\n            n += 1\n        cur += timedelta(days=1)\n    return n",
+      "content": "def _employee_capacity_hours(e, d1_iso, d2_iso, holidays, schedule_mode='legacy'):\n    \"\"\"PATCH 1.0.17: ёмкость в часах с учётом режима графика.\"\"\"\n    hired = (e.get('hired_date') or '').strip()\n    fired = (e.get('fired_date') or '').strip() if e.get('fired') else ''\n    start_iso = d1_iso\n    end_iso = d2_iso\n    if hired and hired > start_iso:\n        start_iso = hired\n    if fired and fired < end_iso:\n        end_iso = fired\n    if start_iso > end_iso:\n        return 0.0\n    absence_dates = set()\n    for v in (e.get('vacations') or []):\n        vt = v.get('type') or 'vacation'\n        if vt == 'remote':\n            continue\n        vf = v.get('from') or ''\n        vto = v.get('to') or ''\n        if not vf or not vto:\n            continue\n        s = max(vf, start_iso)\n        en = min(vto, end_iso)\n        if s > en:\n            continue\n        try:\n            cur = datetime.strptime(s, '%Y-%m-%d').date()\n            end = datetime.strptime(en, '%Y-%m-%d').date()\n            while cur <= end:\n                iso = cur.strftime('%Y-%m-%d')\n                if cur.weekday() < 5 and iso not in holidays:\n                    absence_dates.add(iso)\n                cur += timedelta(days=1)\n        except Exception:\n            pass\n    try:\n        start = datetime.strptime(start_iso, '%Y-%m-%d').date()\n        end = datetime.strptime(end_iso, '%Y-%m-%d').date()\n    except Exception:\n        return 0.0\n    total = 0.0\n    cur = start\n    while cur <= end:\n        iso = cur.strftime('%Y-%m-%d')\n        wd = cur.weekday()\n        if wd < 5 and iso not in holidays and iso not in absence_dates:\n            if schedule_mode == 'extended':\n                total += 7.75 if wd == 4 else 8.25\n            else:\n                total += 8.0\n        cur += timedelta(days=1)\n    return total\n\n\ndef _employee_capacity_days(e, d1_iso, d2_iso, holidays):\n    \"\"\"DEPRECATED: оставлена для обратной совместимости.\"\"\"\n    hours = _employee_capacity_hours(e, d1_iso, d2_iso, holidays, 'legacy')\n    return int(round(hours / 8.0))"
+    },
+
+    {
+      "type": "replace",
+      "path": "plugins/capacity.py",
+      "find": "            eid = e['id']\n            cap_days = _employee_capacity_days(e, d1_iso, d2_iso, holidays)\n            capacity = cap_days * 8",
+      "content": "            eid = e['id']\n            _sched_mode = db.get_setting('work_schedule_mode', 'legacy')\n            capacity = _employee_capacity_hours(e, d1_iso, d2_iso, holidays, _sched_mode)"
+    },
+
+    {
+      "type": "replace",
+      "path": "plugins/my_week.py",
+      "find": "        avg_per_day = round(hours_period / max(len(active_days), 1) * 4) / 4 if active_days else 0\n        capacity_pct = round(100 * hours_period / (wd * 8)) if wd else 0",
+      "content": "        avg_per_day = round(hours_period / max(len(active_days), 1) * 4) / 4 if active_days else 0\n        # PATCH 1.0.17: норма по режиму графика\n        _sched_mode_mw = db.get_setting('work_schedule_mode', 'legacy')\n        _norm_total_mw = 0.0\n        _cur_d = d1\n        while _cur_d <= d2:\n            _iso_d = _cur_d.strftime('%Y-%m-%d')\n            _wd_d = _cur_d.weekday()\n            if _wd_d < 5 and _iso_d not in (data.get('holidays') or {}):\n                if _sched_mode_mw == 'extended':\n                    _norm_total_mw += 7.75 if _wd_d == 4 else 8.25\n                else:\n                    _norm_total_mw += 8.0\n            _cur_d += timedelta(days=1)\n        capacity_pct = round(100 * hours_period / _norm_total_mw) if _norm_total_mw else 0"
+    },
+
+    {
+      "type": "replace",
+      "path": "plugins/weekly_summary_widget.py",
+      "find": "    norm_total = workdays * 8 * max(1, len(hours_by_emp))",
+      "content": "    # PATCH 1.0.17: норма по режиму графика\n    try:\n        _sched_ws = db.get_setting('work_schedule_mode', 'legacy')\n    except Exception:\n        _sched_ws = 'legacy'\n    _norm_per_day_ws = 0.0\n    _cur_ws = monday\n    while _cur_ws <= sunday:\n        _iso_ws = _cur_ws.strftime('%Y-%m-%d')\n        _wd_ws = _cur_ws.weekday()\n        if _wd_ws < 5 and _iso_ws not in holidays:\n            if _sched_ws == 'extended':\n                _norm_per_day_ws += 7.75 if _wd_ws == 4 else 8.25\n            else:\n                _norm_per_day_ws += 8.0\n        _cur_ws += timedelta(days=1)\n    norm_total = _norm_per_day_ws * max(1, len(hours_by_emp))"
+    },
+
+    {
+      "type": "replace",
+      "path": "templates/tracker.html",
+      "find": "<div class=\"form-group\"><label>⏱ Часы</label><input type=\"number\" id=\"log_hours\" min=\"0\" max=\"24\" step=\"0.25\" value=\"8\"></div>",
+      "content": "<div class=\"form-group\"><label>⏱ Часы</label><input type=\"text\" id=\"log_hours\" value=\"8\" placeholder=\"8:15\" maxlength=\"8\" autocomplete=\"off\"></div>"
+    },
+
+    {
+      "type": "append",
+      "path": "static/tracker.js",
+      "idempotent": true,
+      "content": "\n\n/* ============================================================\n   PATCH 1.0.17 — парсинг/формат часов + overflow по норме дня\n   ============================================================ */\n(function(){\n'use strict';\nif (window.__trkHoursFmtV1017) return;\nwindow.__trkHoursFmtV1017 = true;\n\nwindow._parseHoursInput = function(s) {\n    s = String(s == null ? '' : s).trim().replace(',', '.');\n    if (!s) return null;\n    var m = s.match(/^(\\d+)[:](\\d+)$/);\n    if (m) {\n        var h1 = parseInt(m[1], 10) || 0;\n        var mm1 = parseInt(m[2], 10) || 0;\n        if (mm1 > 59) mm1 = 59;\n        return Math.round((h1 + mm1 / 60) * 100) / 100;\n    }\n    var n = parseFloat(s);\n    return isNaN(n) ? null : n;\n};\n\nwindow._formatHoursInput = function(h) {\n    h = Number(h) || 0;\n    var totalMin = Math.round(h * 60);\n    var hh = Math.floor(totalMin / 60);\n    var mm = totalMin - hh * 60;\n    if (mm === 0) return String(hh);\n    return hh + ':' + (mm < 10 ? '0' : '') + mm;\n};\n\n// На blur — форматируем поле\nvar _lh = document.getElementById('log_hours');\nif (_lh) {\n    _lh.addEventListener('blur', function(){\n        var v = window._parseHoursInput(this.value);\n        if (v !== null) this.value = window._formatHoursInput(v);\n    });\n}\n\n})();\n"
+    },
+
+    {
+      "type": "replace",
+      "path": "static/tracker.js",
+      "find": "        hours: parseFloat($('log_hours') ? $('log_hours').value : 0) || 0,",
+      "content": "        hours: (window._parseHoursInput ? window._parseHoursInput($('log_hours') ? $('log_hours').value : '0') : (parseFloat($('log_hours') ? $('log_hours').value : 0) || 0)) || 0,"
+    },
+
+    {
+      "type": "replace",
+      "path": "static/tracker.js",
+      "find": "    var planned = hours ? (parseFloat(hours.value) || 0) : 0;",
+      "content": "    var planned = hours ? ((window._parseHoursInput ? window._parseHoursInput(hours.value) : parseFloat(hours.value)) || 0) : 0;"
+    },
+
+    {
+      "type": "replace",
+      "path": "static/tracker.js",
+      "find": "    g('log_hours', entry ? entry.hours : 8);",
+      "content": "    g('log_hours', entry ? (window._formatHoursInput ? window._formatHoursInput(entry.hours) : entry.hours) : (window._formatHoursInput ? window._formatHoursInput(8) : 8));"
+    },
+
+    {
+      "type": "replace",
+      "path": "static/tracker.js",
+      "find": "    if (willBe > 24) { block.classList.add('danger'); txt = '⚠ Превышение 24 ч! ' + txt; }\n    else if (willBe > 8) { block.classList.add('warn'); txt = '⚠ Больше 8 ч. ' + txt; }\n    else if (willBe === 8) { block.classList.add('ok'); txt = '✓ Ровно 8 ч. ' + txt; }\n    else { block.classList.add('warn'); }",
+      "content": "    var _dayObj = (state.calendar && state.calendar.days) ? state.calendar.days.find(function(d){ return d.date === dk; }) : null;\n    var _norm = (_dayObj && typeof _dayObj.day_norm === 'number') ? _dayObj.day_norm : 8;\n    var _fmtN = window._formatHoursInput ? window._formatHoursInput(_norm) : _norm;\n    if (willBe > 24) { block.classList.add('danger'); txt = '⚠ Превышение 24 ч! ' + txt; }\n    else if (_norm === 0 && willBe > 0) { block.classList.add('warn'); txt = '⚠ Работа в выходной/праздник (' + willBe + 'ч). ' + txt; }\n    else if (_norm > 0 && willBe > _norm + 0.01) { block.classList.add('warn'); txt = '⚠ Больше ' + _fmtN + ' ч. ' + txt; }\n    else if (_norm > 0 && Math.abs(willBe - _norm) < 0.01) { block.classList.add('ok'); txt = '✓ Ровно ' + _fmtN + ' ч. ' + txt; }\n    else { block.classList.add('warn'); }"
+    },
+
+    {
+      "type": "replace",
+      "path": "static/tracker.js",
+      "find": "        if (sub) sub.textContent = (info.employee_name || 'Сотрудник') + ' · ' + (info.date || '');\n        var over = (info.total || 0) - 8;",
+      "content": "        var _ovNorm = (typeof info.day_norm === 'number') ? info.day_norm : 8;\n        var _isNonWork = !!(info.is_weekend || info.is_holiday);\n        if (sub) {\n            var _subTxt = (info.employee_name || 'Сотрудник') + ' · ' + (info.date || '');\n            if (_isNonWork) _subTxt += (info.is_holiday ? ' · 🎉 праздник' : ' · выходной');\n            sub.textContent = _subTxt;\n        }\n        var _ovTitleEl = m.querySelector('.ov-title');\n        if (_ovTitleEl) {\n            _ovTitleEl.textContent = _isNonWork\n                ? (info.is_holiday ? '🎉 Работа в праздник' : '📅 Работа в выходной')\n                : 'Превышение нормы дня';\n        }\n        var _distBtn0 = m.querySelector('[data-ov=\"distribute\"]');\n        if (_distBtn0) _distBtn0.style.display = _isNonWork ? 'none' : '';\n        var over = (info.total || 0) - _ovNorm;"
+    },
+
+    {
+      "type": "replace",
+      "path": "static/tracker.js",
+      "find": "    var workdays = 0;\n    days.forEach(function(dk) { if ((dm[dk] || {}).is_workday) workdays++; });\n    var normHours = workdays * 8;",
+      "content": "    var workdays = 0;\n    days.forEach(function(dk) { if ((dm[dk] || {}).is_workday) workdays++; });\n    var normHours = 0;\n    days.forEach(function(dk) {\n        var m = dm[dk] || {};\n        if (typeof m.day_norm === 'number') normHours += m.day_norm;\n        else if (m.is_workday) normHours += 8;\n    });"
+    },
+
+
+    {
+      "type": "replace",
+      "path": "static/tracker.js",
+      "find": "        state.currentUser = d.current_user || null;",
+      "content": "        state.currentUser = d.current_user || null;\n        state.workSchedule = d.work_schedule || 'legacy';"
+    },
+
+    {
+      "type": "insert",
+      "path": "templates/settings.html",
+      "position": "before",
+      "optional": true,
+      "idempotent": true,
+      "marker": "        <div class=\"form-group\" style=\"margin-top:10px;\">\n            <label class=\"sum-toggle\" style=\"justify-content:flex-start;\">\n                <input type=\"checkbox\" id=\"excelMaskNamesCb\">",
+      "content": "        <div class=\"form-group\" style=\"margin-top:18px;\">\n            <label>📅 График работы</label>\n            <div style=\"display:flex;flex-direction:column;gap:8px;padding:8px 0;\">\n                <label class=\"sum-toggle\" style=\"justify-content:flex-start;\">\n                    <input type=\"radio\" name=\"workSchedule\" value=\"legacy\" id=\"wsLegacy\">\n                    <span><b>8ч × 5 дней</b> (40ч в неделю) — классический</span>\n                </label>\n                <label class=\"sum-toggle\" style=\"justify-content:flex-start;\">\n                    <input type=\"radio\" name=\"workSchedule\" value=\"extended\" id=\"wsExtended\">\n                    <span><b>Пн–Чт 8:15, Пт 7:45</b> (40ч 45мин в неделю) — расширенный</span>\n                </label>\n            </div>\n            <div class=\"db-path-note\">\n                Влияет на: норму дня в календаре, лимит переработки при сохранении отметки, проценты загрузки в Своде, ёмкость в «Загрузке сотрудников», норму в «Моей неделе» и «Своде за неделю». Сами часы в work_logs не меняются — пересчитываются только производные показатели. Сб, Вс и праздники = 0ч нормы (ввод часов = переработка).\n            </div>\n        </div>\n"
+    },
+
+    {
+      "type": "append",
+      "path": "static/settings.js",
+      "idempotent": true,
+      "content": "\n\n/* PATCH 1.0.17 — UI: график работы */\n(function(){\n'use strict';\nif (window.__trkWorkScheduleUI) return;\nwindow.__trkWorkScheduleUI = true;\n\nfunction _csrf(){ return window.REESTR_CSRF || ''; }\nfunction _notify(msg, kind){\n    if (typeof window.__settingsNotify === 'function') { try { window.__settingsNotify(msg, kind); return; } catch(e){} }\n}\n\nfunction _load(){\n    fetch('/api/settings/work_schedule', {credentials: 'same-origin'})\n        .then(function(r){ return r.ok ? r.json() : null; })\n        .then(function(d){\n            if (!d || !d.success) return;\n            var leg = document.getElementById('wsLegacy');\n            var ext = document.getElementById('wsExtended');\n            if (d.mode === 'extended') { if (ext) ext.checked = true; }\n            else { if (leg) leg.checked = true; }\n        }).catch(function(){});\n}\n\nfunction _save(mode){\n    var h = {'Content-Type': 'application/json'};\n    if (_csrf()) h['X-CSRF-Token'] = _csrf();\n    fetch('/api/settings/work_schedule', {\n        method: 'POST', credentials: 'same-origin', headers: h,\n        body: JSON.stringify({mode: mode})\n    }).then(function(r){ return r.json(); }).then(function(d){\n        if (d && d.success) {\n            _notify('✅ График сохранён. Перезагрузите страницу для обновления норм.');\n        } else {\n            _notify('❌ ' + ((d && d.error) || 'Ошибка'), 'error');\n        }\n    }).catch(function(e){ _notify('❌ ' + (e.message || 'Ошибка'), 'error'); });\n}\n\nfunction _wire(){\n    ['wsLegacy', 'wsExtended'].forEach(function(id){\n        var el = document.getElementById(id);\n        if (el && !el._wsWired) {\n            el._wsWired = true;\n            el.addEventListener('change', function(){ if (this.checked) _save(this.value); });\n        }\n    });\n}\n\ndocument.addEventListener('click', function(e){\n    if (e.target && e.target.closest && e.target.closest('.settings-tab[data-tab=\"db\"]')) {\n        setTimeout(function(){ _wire(); _load(); }, 150);\n    }\n});\n\nfunction boot(){ setTimeout(function(){ _wire(); _load(); }, 300); }\nif (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);\nelse boot();\n})();\n"
+    }
+
+  ]
+}
+

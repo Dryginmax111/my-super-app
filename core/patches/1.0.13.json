@@ -1,0 +1,47 @@
+{
+  "id": "1.0.13",
+  "target_version": "1.0.13",
+  "independent": true,
+  "description": "Фикс чекбокса автообновления: удаление дублей эндпоинтов, явная обработка ошибок, блокировка до загрузки.",
+  "requires": [],
+  "operations": [
+
+    {
+      "type": "replace",
+      "path": "app.py",
+      "optional": true,
+      "find": "    @app.route('/api/plugins/updater/settings', methods=['GET'])\n    def _up_get_settings():\n        try:\n            u = current_user(db)\n            if not u: return jsonify({'success': False, 'error': 'forbidden'}), 403\n            auto = db.get_setting('updater_auto_update', '0')\n            return jsonify({'success': True, 'auto_update': auto == '1'})\n        except Exception as e:\n            return jsonify({'success': False, 'error': str(e)}), 500\n\n    @app.route('/api/plugins/updater/settings', methods=['POST'])\n    def _up_set_settings():\n        try:\n            u = current_user(db)\n            if not u: return jsonify({'success': False, 'error': 'forbidden'}), 403\n            body = request.get_json() or {}\n            if 'auto_update' in body:\n                db.set_setting('updater_auto_update', '1' if body['auto_update'] else '0')\n            return jsonify({'success': True})\n        except Exception as e:\n            return jsonify({'success': False, 'error': str(e)}), 500\n\n",
+      "content": ""
+    },
+
+    {
+      "type": "replace",
+      "path": "plugins/updater.py",
+      "find": "    @app.route('/api/plugins/updater/settings', methods=['GET'])\n    def _up_get_settings():\n        try:\n            u = _auth_ok(db)\n            if not u: return jsonify({'success': False, 'error': 'forbidden'}), 403\n            auto = db.get_setting('updater_auto_update', '0')\n            return jsonify({'success': True, 'auto_update': auto == '1'})\n        except Exception as e:\n            return jsonify({'success': False, 'error': str(e)}), 500\n\n    @app.route('/api/plugins/updater/settings', methods=['POST'])\n    def _up_set_settings():\n        try:\n            u = _auth_ok(db)\n            if not u: return jsonify({'success': False, 'error': 'forbidden'}), 403\n            body = request.get_json() or {}\n            if 'auto_update' in body:\n                db.set_setting('updater_auto_update', '1' if body['auto_update'] else '0')\n            return jsonify({'success': True})\n        except Exception as e:\n            return jsonify({'success': False, 'error': str(e)}), 500\n\n",
+      "content": "    @app.route('/api/plugins/updater/settings', methods=['GET'])\n    def _up_get_settings():\n        try:\n            u = _auth_ok(db)\n            if not u: return jsonify({'success': False, 'error': 'forbidden'}), 403\n            auto = db.get_setting('updater_auto_update', '0')\n            return jsonify({'success': True, 'auto_update': auto == '1'})\n        except Exception as e:\n            return jsonify({'success': False, 'error': str(e)}), 500\n\n    @app.route('/api/plugins/updater/settings', methods=['POST'])\n    def _up_set_settings():\n        try:\n            u = _auth_ok(db)\n            if not u: return jsonify({'success': False, 'error': 'forbidden'}), 403\n            body = request.get_json() or {}\n            val = '1' if body.get('auto_update') else '0'\n            db.set_setting('updater_auto_update', val)\n            return jsonify({'success': True, 'auto_update': val == '1'})\n        except Exception as e:\n            return jsonify({'success': False, 'error': str(e)}), 500\n\n"
+    },
+
+    {
+      "type": "replace",
+      "path": "templates/tracker.html",
+      "find": "                <label class=\"ud-item\" style=\"cursor: pointer;\" id=\"udAutoUpdateWrap\">\n                    <input type=\"checkbox\" id=\"udAutoUpdate\" style=\"margin-right: 8px; accent-color: var(--trk-accent); width: 14px; height: 14px;\">\n                    <span class=\"ud-icon\">🤖</span>\n                    <span class=\"ud-label\">Автообновление</span>\n                </label>",
+      "content": "                <label class=\"ud-item\" style=\"cursor: pointer;\" id=\"udAutoUpdateWrap\">\n                    <input type=\"checkbox\" id=\"udAutoUpdate\" disabled style=\"margin-right: 8px; accent-color: var(--trk-accent); width: 14px; height: 14px;\">\n                    <span class=\"ud-icon\">🤖</span>\n                    <span class=\"ud-label\">Автообновление</span>\n                </label>"
+    },
+
+    {
+      "type": "regex",
+      "path": "static/tracker.js",
+      "optional": true,
+      "pattern": "/\\* =+\\n   PATCH 1\\.0\\.13[\\s\\S]*?\\}\\)\\(\\);\\n",
+      "content": ""
+    },
+    {
+      "type": "append",
+      "path": "static/tracker.js",
+      "idempotent": true,
+      "content": "\n\n/* ============================================================\n   PATCH 1.0.14 — Автообновление в меню пользователя (стабильное)\n   ============================================================ */\n(function(){\n'use strict';\nif (window.__trkAutoUpdateMenuV114) return;\nwindow.__trkAutoUpdateMenuV114 = true;\n\nvar _cbMenu = document.getElementById('udAutoUpdate');\nif (!_cbMenu) return;\n\nfunction _getCSRF() {\n    var csrf = window.REESTR_CSRF || '';\n    if (!csrf) {\n        var meta = document.querySelector('meta[name=\"csrf-token\"]');\n        if (meta) csrf = meta.getAttribute('content') || '';\n    }\n    return csrf;\n}\n\nfunction _notify(msg, kind) {\n    if (typeof window.__trackerNotify === 'function') {\n        try { window.__trackerNotify(msg, kind); return; } catch(e){}\n    }\n    if (typeof window.__settingsNotify === 'function') {\n        try { window.__settingsNotify(msg, kind); return; } catch(e){}\n    }\n    console.warn(msg);\n}\n\nfunction _syncBoth(val) {\n    _cbMenu.checked = val;\n    var cbModal = document.getElementById('trkUpdateAuto');\n    if (cbModal) cbModal.checked = val;\n}\n\nfunction _load() {\n    fetch('/api/plugins/updater/settings', {credentials: 'same-origin'})\n        .then(function(r) {\n            var ct = r.headers.get('content-type') || '';\n            if (ct.indexOf('application/json') === -1) throw new Error('Ожидался JSON, получен ' + ct);\n            return r.json();\n        })\n        .then(function(d) {\n            if (d && d.success) {\n                _syncBoth(!!d.auto_update);\n                _cbMenu.disabled = false;\n            } else {\n                _notify('❌ Ошибка загрузки настроек автообновления: ' + (d.error || '?'), 'error');\n            }\n        })\n        .catch(function(e) {\n            _notify('❌ Ошибка соединения: ' + e.message, 'error');\n        });\n}\n\nfunction _save(val) {\n    _cbMenu.disabled = true;\n    var csrf = _getCSRF();\n    var hdrs = {'Content-Type': 'application/json'};\n    if (csrf) hdrs['X-CSRF-Token'] = csrf;\n\n    fetch('/api/plugins/updater/settings', {\n        method: 'POST', credentials: 'same-origin', headers: hdrs,\n        body: JSON.stringify({auto_update: val})\n    })\n    .then(function(r) {\n        var ct = r.headers.get('content-type') || '';\n        if (ct.indexOf('application/json') === -1) throw new Error('HTTP ' + r.status);\n        return r.json();\n    })\n    .then(function(d) {\n        _cbMenu.disabled = false;\n        if (d && d.success) {\n            _syncBoth(!!d.auto_update);\n            _notify(val ? '✅ Автообновление включено' : '⏸ Автообновление выключено');\n        } else {\n            _notify('❌ Не удалось сохранить: ' + (d.error || '?'), 'error');\n            _syncBoth(!val);\n        }\n    })\n    .catch(function(e) {\n        _cbMenu.disabled = false;\n        _notify('❌ Ошибка сохранения: ' + e.message, 'error');\n        _syncBoth(!val);\n    });\n}\n\n_cbMenu.addEventListener('change', function(e) {\n    e.stopPropagation();\n    _save(this.checked);\n});\n\n_cbMenu.addEventListener('click', function(e) { e.stopPropagation(); });\n\nvar wrap = document.getElementById('udAutoUpdateWrap');\nif (wrap) {\n    wrap.addEventListener('click', function(e) {\n        if (e.target !== _cbMenu) {\n            e.preventDefault();\n            e.stopPropagation();\n            if (!_cbMenu.disabled) {\n                _cbMenu.checked = !_cbMenu.checked;\n                _save(_cbMenu.checked);\n            }\n        }\n    });\n}\n\ndocument.addEventListener('change', function(e) {\n    if (e.target && e.target.id === 'trkUpdateAuto') {\n        _syncBoth(e.target.checked);\n    }\n});\n\n_load();\n})();\n"
+    }
+
+  ]
+}
+

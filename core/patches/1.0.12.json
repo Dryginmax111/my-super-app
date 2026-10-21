@@ -1,0 +1,25 @@
+{
+  "id": "1.0.12",
+  "target_version": "1.0.12",
+  "independent": true,
+  "description": "Добавлен постоянный переключатель 'Автообновление' в меню пользователя (в шапке трекера), с синхронизацией и проверкой прав.",
+  "requires": [],
+  "operations": [
+
+    {
+      "type": "replace",
+      "path": "templates/tracker.html",
+      "find": "                <div class=\"ud-sep\"></div>\n                <form method=\"post\" action=\"{{ url_for('logout') }}\" class=\"ud-form\">",
+      "content": "                <div class=\"ud-sep\"></div>\n                {% if P.get('action.updater.apply') or P.get('tab.updater') %}\n                <label class=\"ud-item\" style=\"cursor: pointer;\" id=\"udAutoUpdateWrap\">\n                    <input type=\"checkbox\" id=\"udAutoUpdate\" style=\"margin-right: 8px; accent-color: var(--trk-accent); width: 14px; height: 14px;\">\n                    <span class=\"ud-icon\">🤖</span>\n                    <span class=\"ud-label\">Автообновление</span>\n                </label>\n                <div class=\"ud-sep\"></div>\n                {% endif %}\n                <form method=\"post\" action=\"{{ url_for('logout') }}\" class=\"ud-form\">"
+    },
+
+    {
+      "type": "append",
+      "path": "static/tracker.js",
+      "idempotent": true,
+      "content": "\n\n/* ============================================================\n   PATCH 1.0.13 — Автообновление в меню пользователя\n   ============================================================ */\n(function(){\n'use strict';\nif (window.__trkAutoUpdateMenuV113) return;\nwindow.__trkAutoUpdateMenuV113 = true;\n\nvar _cbMenu = document.getElementById('udAutoUpdate');\nvar _wrap = document.getElementById('udAutoUpdateWrap');\n\n// Если пункта нет (нет прав или не отрендерился) — выходим\nif (!_cbMenu) return;\n\nfunction _syncCheckboxes(val) {\n    _cbMenu.checked = val;\n    var _cbModal = document.getElementById('trkUpdateAuto');\n    if (_cbModal) _cbModal.checked = val;\n}\n\nfunction _saveSetting(val) {\n    _syncCheckboxes(val);\n    var csrf = window.REESTR_CSRF || '';\n    var hdrs = {'Content-Type': 'application/json'};\n    if (csrf) hdrs['X-CSRF-Token'] = csrf;\n    \n    fetch('/api/plugins/updater/settings', {\n        method: 'POST', credentials: 'same-origin', headers: hdrs,\n        body: JSON.stringify({auto_update: val})\n    }).catch(function(){});\n}\n\n// 1. Загружаем текущее состояние при старте\nfetch('/api/plugins/updater/settings', {credentials: 'same-origin'})\n    .then(function(r) { return r.json(); })\n    .then(function(d) {\n        if (d && d.success) _syncCheckboxes(d.auto_update);\n    })\n    .catch(function(){});\n\n// 2. Обработчик клика по чекбоксу в меню\n_cbMenu.addEventListener('change', function(e) {\n    e.stopPropagation();\n    _saveSetting(this.checked);\n});\n\n// 3. Чтобы меню не закрывалось при клике на чекбокс или его label\n_cbMenu.addEventListener('click', function(e) { e.stopPropagation(); });\nif (_wrap) {\n    _wrap.addEventListener('click', function(e) {\n        // Если кликнули не по самому чекбоксу, а по тексту/иконке — переключаем вручную\n        if (e.target !== _cbMenu) {\n            e.preventDefault();\n            e.stopPropagation();\n            _cbMenu.checked = !_cbMenu.checked;\n            _saveSetting(_cbMenu.checked);\n        }\n    });\n}\n\n// 4. Синхронизация из модалки (если пользователь поменял настройку там)\nvar _origShowModal = window.__trkUpdateNotifierV3 ? true : false;\ndocument.addEventListener('change', function(e) {\n    if (e.target && e.target.id === 'trkUpdateAuto') {\n        _syncCheckboxes(e.target.checked);\n    }\n});\n\n})();\n"
+    }
+
+  ]
+}
+
