@@ -59,14 +59,16 @@ body {
 
 /* Шапка */
 .head {
-    display: flex; gap: 14px; align-items: center; flex-wrap: wrap;
+    display: flex; flex-direction: column; gap: 10px;
     padding: 14px 18px;
     background: var(--pg-card-bg, #1a1a1a);
     border: 1px solid var(--pg-card-border, rgba(245,215,110,0.22));
     border-radius: 14px;
 }
+.head-top { display: flex; align-items: center; gap: 14px; }
+.head-filters { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 .head h1 {
-    margin: 0; font-size: 1.25rem; font-weight: 800;
+    margin: 0; font-size: 1.6rem; font-weight: 800;
     color: var(--pg-accent, #f5d76e);
 }
 .back {
@@ -224,8 +226,8 @@ body {
     transition: background 0.12s;
 }
 /* П.3: высота строки = 1.5× ширины столбца (день 44→66, неделя 92→138) */
-.gg-mode-day .gg-row { height: 66px; }
-.gg-mode-week .gg-row { height: 138px; }
+.gg-mode-day .gg-row { height: 40px; }
+.gg-mode-week .gg-row { height: 70px; }
 /* П.7: число нагрузки в ячейке недели */
 .gg-wk-load {
     position: absolute; top: 3px; right: 4px;
@@ -286,7 +288,7 @@ body {
 .gg-track {
     position: relative;
     flex: 0 0 auto;
-    height: 42px;
+    height: 70px;
 }
 .gg-stage-seg {
     position: absolute;
@@ -435,9 +437,10 @@ body.trk-theme-light .legend { background: #ffffff; border-top-color: rgba(0,0,0
 }
 .gg-wk-week {
     flex: 0 0 auto;
-    display: flex; align-items: center; justify-content: center;
-    height: 32px;
-    font-size: 0.68rem; font-weight: 700;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    height: 44px;
+    font-size: 0.74rem; font-weight: 700; line-height: 1.05;
+    text-align: center;
     color: var(--pg-text, #e8e8e8);
     border-right: 1px solid var(--pg-card-border-soft, rgba(245,215,110,0.12));
 }
@@ -459,6 +462,35 @@ body.trk-theme-light .legend { background: #ffffff; border-top-color: rgba(0,0,0
 body.trk-theme-light .gg-slider-wrap { background:#fff; }
 body.trk-theme-light .gg-wk-week { color:#212121; }
 
+/* --- Вторая таблица: нагрузка по тер банкам --- */
+.banks-title {
+    font-size: 1.1rem; font-weight: 800;
+    color: var(--pg-accent, #f5d76e);
+    padding: 2px 4px;
+}
+.gg-bank-cell {
+    position: absolute; top: 6px; bottom: 6px;
+    border-radius: 4px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 0.82rem; font-weight: 800;
+    color: var(--pg-text, #e8e8e8);
+    background: var(--pg-input-bg, #232323);
+    border: 1px solid var(--pg-card-border-soft, rgba(245,215,110,0.18));
+}
+/* Тепловая заливка по величине нагрузки */
+.gg-bank-cell.lvl0 { background: transparent; border-color: transparent; color: var(--pg-meta,#888); }
+.gg-bank-cell.lvl1 { background: rgba(93,173,226,0.25); }
+.gg-bank-cell.lvl2 { background: rgba(88,214,141,0.30); }
+.gg-bank-cell.lvl3 { background: rgba(244,208,63,0.38); color:#2a2300; }
+.gg-bank-cell.lvl4 { background: rgba(235,152,78,0.45); color:#2a1600; }
+.gg-bank-cell.lvl5 { background: rgba(236,112,99,0.55); color:#2a0a06; }
+.gg-bank-total {
+    font-weight: 800; color: var(--pg-accent, #f5d76e);
+}
+body.trk-theme-light .banks-title { color:#1b5e20; }
+body.trk-theme-light .gg-bank-cell { color:#212121; background:#f1f3f4; border-color:rgba(0,0,0,0.1); }
+body.trk-theme-light .gg-bank-cell.lvl0 { background:transparent; border-color:transparent; color:#999; }
+
 @media (max-width: 700px) {
     .gg-corner, .gg-name { flex-basis: 220px; width: 220px; }
     .gg-bg { left: 220px; }
@@ -470,30 +502,34 @@ body.trk-theme-light .gg-wk-week { color:#212121; }
 <body>
 <div class="wrap">
     <div class="head">
-        <a class="back" href="/">← К трекеру</a>
-        <h1>📅 План проверок</h1>
-        <label>С <input type="date" id="fFrom"></label>
-        <label>По <input type="date" id="fTo"></label>
-        <select id="fDept"><option value="">Все отделы</option></select>
-        <select id="fTeam"><option value="">Все команды</option></select>
-        <select id="fStatus">
-            <option value="">Все статусы</option>
-            <option value="active">Активные</option>
-            <option value="paused">Приостановленные</option>
-            <option value="done">Выполненные</option>
-            <option value="archived">Архив</option>
-        </select>
-        <label>Вид <select id="fView">
-            <option value="week">Недели</option>
-            <option value="day">Дни</option>
-        </select></label>
-        <select id="fType">
-            <option value="">Все типы</option>
-            <option value="розничная">Розничная</option>
-            <option value="корпоративная">Корпоративная</option>
-        </select>
-        <select id="fPocket"><option value="">Все карманы</option></select>
-        <button class="apply" id="fApply">✓ Показать</button>
+        <div class="head-top">
+            <a class="back" href="/">← К трекеру</a>
+            <h1>📅 План проверок</h1>
+        </div>
+        <div class="head-filters">
+            <select id="fType">
+                <option value="">Все типы проверок</option>
+                <option value="розничная">Розничная</option>
+                <option value="корпоративная">Корпоративная</option>
+            </select>
+            <select id="fPocket"><option value="">Все карманы</option></select>
+            <select id="fDept"><option value="">Все тер банки</option></select>
+            <select id="fTeam"><option value="">Все команды</option></select>
+            <label>С <input type="date" id="fFrom"></label>
+            <label>По <input type="date" id="fTo"></label>
+            <select id="fStatus">
+                <option value="">Все статусы</option>
+                <option value="active">Активные</option>
+                <option value="paused">Приостановленные</option>
+                <option value="done">Выполненные</option>
+                <option value="archived">Архив</option>
+            </select>
+            <label>Вид <select id="fView">
+                <option value="week">Недели</option>
+                <option value="day">Дни</option>
+            </select></label>
+            <button class="apply" id="fApply">✓ Показать</button>
+        </div>
     </div>
     <div class="gantt-box" id="ganttBox">
         <div class="loading">Загрузка…</div>
@@ -509,6 +545,8 @@ body.trk-theme-light .gg-wk-week { color:#212121; }
         <div class="it"><span class="sw archived"></span>Архив</div>
         <div class="it" style="margin-left:auto;font-style:italic;">Сегодняшний день выделен зелёным</div>
     </div>
+    <div class="banks-title" id="banksTitle" style="display:none;">Нагрузка по тер банкам</div>
+    <div class="gantt-box" id="banksBox" style="display:none;"></div>
 </div>
 
 <script>
@@ -541,13 +579,13 @@ function isoAddDays(iso, n) {
     return y + '-' + m + '-' + dd;
 }
 
-/* Инициализация диапазона — 4 недели от понедельника */
+/* Инициализация диапазона — полгода от понедельника текущей недели */
 function initDates() {
     var t = new Date();
     var wd = t.getDay();
     var diff = (wd === 0) ? -6 : (1 - wd);
     var mon = new Date(t.getTime() + diff * 86400000);
-    var end = new Date(mon.getTime() + 27 * 86400000);
+    var end = new Date(mon.getFullYear(), mon.getMonth() + 6, mon.getDate());
     // PATCH v1.0.5: toISOString даёт UTC-сдвиг; пишем вручную
     var iso = function(d) {
         var y = d.getFullYear();
@@ -559,7 +597,7 @@ function initDates() {
     document.getElementById('fTo').value = iso(end);
 }
 
-var WEEK_W = 92;         /* ширина недельной колонки */
+var WEEK_W = 46;         /* ширина недельной колонки (уже, подпись в 2 строки) */
 var MONTH_COLORS = ['#3b5ba5','#2e8b7a','#a5683b','#6a4ba5','#a53b5b','#5b8b2e','#8b7a2e','#2e6aa5','#a53b8b','#4ba58b','#a5a53b','#7a2ea5'];
 var MONTH_NAMES = ['Январь','Февраль','Март','Апрель','Май','Июнь','Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'];
 
@@ -661,7 +699,12 @@ function load() {
 function render(d) {
     var view = document.getElementById('fView').value;
     if (view === 'week') { renderWeek(d); }
-    else { renderDay(d); }
+    else {
+        // Вторая таблица (нагрузка по тер банкам) только в недельном режиме
+        document.getElementById('banksTitle').style.display = 'none';
+        document.getElementById('banksBox').style.display = 'none';
+        renderDay(d);
+    }
     setupSlider();
 }
 
@@ -669,17 +712,27 @@ function setupSlider() {
     var box = document.getElementById('ganttBox');
     var wrap = document.getElementById('ggSliderWrap');
     var sl = document.getElementById('ggSlider');
+    var banks = document.getElementById('banksBox');
     var maxScroll = box.scrollWidth - box.clientWidth;
-    if (maxScroll <= 2) { wrap.style.display = 'none'; return; }
-    wrap.style.display = 'block';
-    sl.max = String(Math.round(maxScroll));
-    sl.value = String(Math.round(box.scrollLeft));
-    sl.oninput = function() { box.scrollLeft = parseInt(sl.value, 10); };
+    if (maxScroll <= 2) { wrap.style.display = 'none'; }
+    else {
+        wrap.style.display = 'block';
+        sl.max = String(Math.round(maxScroll));
+        sl.value = String(Math.round(box.scrollLeft));
+        sl.oninput = function() {
+            box.scrollLeft = parseInt(sl.value, 10);
+            if (banks) banks.scrollLeft = box.scrollLeft;
+        };
+    }
     box.onscroll = function() {
         var ms = box.scrollWidth - box.clientWidth;
         sl.max = String(Math.round(ms));
         sl.value = String(Math.round(box.scrollLeft));
+        if (banks && banks.style.display !== 'none') banks.scrollLeft = box.scrollLeft;
     };
+    if (banks) {
+        banks.onscroll = function() { box.scrollLeft = banks.scrollLeft; };
+    }
 }
 
 function renderDay(d) {
@@ -844,7 +897,7 @@ function renderWeek(d) {
     var html = '<div class="gantt-inner gg-mode-week">';
 
     /* Шапка: двухслойная */
-    html += '<div class="gg-header" style="height:58px;">';
+    html += '<div class="gg-header" style="height:70px;">';
     html += '<div class="gg-corner">Задача</div>';
     html += '<div class="gg-wk-head">';
     /* слой месяцев */
@@ -858,7 +911,7 @@ function renderWeek(d) {
     html += '<div class="gg-wk-weeks">';
     weeks.forEach(function(w) {
         var cls = 'gg-wk-week' + (w.mon === todayMon ? ' today' : '');
-        html += '<div class="' + cls + '" style="width:' + WEEK_W + 'px" title="' + w.mon + ' — ' + w.sun + '">' + fmtD(w.mon) + '–' + fmtD(w.sun) + '</div>';
+        html += '<div class="' + cls + '" style="width:' + WEEK_W + 'px" title="' + w.mon + ' — ' + w.sun + '">' + fmtD(w.mon) + '–<br>' + fmtD(w.sun) + '</div>';
     });
     html += '</div>';
     html += '</div></div>';
@@ -907,6 +960,105 @@ function renderWeek(d) {
         html += '<span class="lg-item"><span class="lg-chip" style="background:' + STAGE_COLORS[k] + '"></span>' + STAGE_LABELS[k] + '</span>';
     });
     html += '</div>';
+
+    box.innerHTML = html;
+
+    /* П.6 обновления: вторая таблица — нагрузка по тер банкам */
+    renderBanks(d, weeks, STAGE_COLORS, STAGE_LABELS);
+}
+
+/* Строит таблицу "Нагрузка по тер банкам": строки — банки,
+   столбцы — те же недели; значение = сумма весов этапов всех задач
+   банка, активных в понедельник недели. Фильтры уже применены на бэке. */
+function renderBanks(d, weeks, STAGE_COLORS, STAGE_LABELS) {
+    var titleEl = document.getElementById('banksTitle');
+    var box = document.getElementById('banksBox');
+    var banks = d.banks || [];
+    var tasks = d.tasks || [];
+
+    if (!banks.length || !weeks.length) {
+        titleEl.style.display = 'none';
+        box.style.display = 'none';
+        return;
+    }
+    titleEl.style.display = 'block';
+    box.style.display = 'block';
+
+    var todayMon = d.today ? mondayOf(d.today) : '';
+    var trackW = weeks.length * WEEK_W;
+
+    /* Матрица: load[bankId][weekIdx] = сумма весов */
+    var load = {};
+    banks.forEach(function(b) {
+        load[b.id] = [];
+        for (var i = 0; i < weeks.length; i++) load[b.id].push(0);
+    });
+    tasks.forEach(function(t) {
+        var dids = t.dept_ids || [];
+        if (!dids.length) return;
+        weeks.forEach(function(w, i) {
+            var st = stageAtMonday(t.stages, w.mon);
+            if (!st) return;
+            var wt = (st.weight != null ? st.weight : 1);
+            dids.forEach(function(did) {
+                if (load[did]) load[did][i] += wt;
+            });
+        });
+    });
+
+    /* Группировка недель по месяцам (как в основной таблице) */
+    var monthSpans = [];
+    weeks.forEach(function(w) {
+        var mi = parseInt(w.mon.split('-')[1], 10) - 1;
+        var yr = w.mon.split('-')[0];
+        var key = yr + '-' + mi;
+        var last = monthSpans[monthSpans.length - 1];
+        if (last && last.key === key) { last.count++; }
+        else { monthSpans.push({ key: key, mi: mi, yr: yr, count: 1 }); }
+    });
+
+    var html = '<div class="gantt-inner gg-mode-week">';
+    /* Шапка — те же недели */
+    html += '<div class="gg-header" style="height:70px;">';
+    html += '<div class="gg-corner">Тер банк</div>';
+    html += '<div class="gg-wk-head">';
+    html += '<div class="gg-wk-months">';
+    monthSpans.forEach(function(m) {
+        var col = MONTH_COLORS[m.mi % MONTH_COLORS.length];
+        html += '<div class="gg-wk-month" style="width:' + (m.count * WEEK_W) + 'px;background:' + col + '">' + MONTH_NAMES[m.mi] + '</div>';
+    });
+    html += '</div>';
+    html += '<div class="gg-wk-weeks">';
+    weeks.forEach(function(w) {
+        var cls = 'gg-wk-week' + (w.mon === todayMon ? ' today' : '');
+        html += '<div class="' + cls + '" style="width:' + WEEK_W + 'px" title="' + w.mon + ' — ' + w.sun + '">' + fmtD(w.mon) + '–<br>' + fmtD(w.sun) + '</div>';
+    });
+    html += '</div></div></div>';
+
+    /* Тело — строки банков */
+    html += '<div class="gg-body">';
+    banks.forEach(function(b) {
+        html += '<div class="gg-row">';
+        html +=   '<div class="gg-name">';
+        html +=     '<span class="gg-ico">🏦</span>';
+        html +=     '<span class="gg-task-name" title="' + esc(b.name) + '">' + esc(b.name) + '</span>';
+        html +=   '</div>';
+        html +=   '<div class="gg-track" style="width:' + trackW + 'px">';
+        weeks.forEach(function(w, i) {
+            var v = load[b.id][i];
+            var txt = (Math.round(v * 100) / 100).toString();
+            var lvl = 0;
+            if (v > 0 && v <= 1) lvl = 1;
+            else if (v <= 2) lvl = 2;
+            else if (v <= 3) lvl = 3;
+            else if (v <= 4) lvl = 4;
+            else if (v > 4) lvl = 5;
+            html += '<div class="gg-bank-cell lvl' + lvl + '" style="left:' + (i * WEEK_W + 2) + 'px;width:' + (WEEK_W - 4) + 'px" title="' + esc(b.name) + ' · неделя ' + fmtD(w.mon) + '–' + fmtD(w.sun) + ' · нагрузка ' + txt + '">' + (v > 0 ? txt : '') + '</div>';
+        });
+        html +=   '</div>';
+        html += '</div>';
+    });
+    html += '</div></div>';
 
     box.innerHTML = html;
 }
@@ -994,8 +1146,8 @@ def register(app, db, hooks):
             return jsonify({'success': False, 'error': 'bad dates'}), 400
         if d2 < d1:
             d1, d2 = d2, d1
-        if (d2 - d1).days > 180:
-            d2 = d1 + timedelta(days=180)
+        if (d2 - d1).days > 190:
+            d2 = d1 + timedelta(days=190)
 
         dept = request.args.get('department', '').strip()
         team = request.args.get('team', '').strip()
@@ -1016,6 +1168,10 @@ def register(app, db, hooks):
         dept_emp_ids = None
         if dept:
             dept_emp_ids = set(e['id'] for e in data.get('employees', []) if e.get('department_id') == dept)
+
+        # Карта сотрудник -> тер банк (отдел) для расчёта нагрузки по банкам.
+        emp_dept = {e['id']: (e.get('department_id') or '') for e in data.get('employees', [])}
+        dept_name = {d['id']: (d.get('name') or '') for d in data.get('departments', [])}
 
         days = []
         cur = d1
@@ -1067,6 +1223,8 @@ def register(app, db, hooks):
                     except Exception:
                         pass
             overdue = bool(dl and dl < today and t.get('status') not in ('done', 'archived'))
+            # Тер банки (отделы) задачи — по отделам её исполнителей.
+            t_dept_ids = sorted({emp_dept.get(a, '') for a in assigns if emp_dept.get(a, '')})
             out.append({
                 'id': t['id'],
                 'name': t.get('name', ''),
@@ -1079,18 +1237,23 @@ def register(app, db, hooks):
                 'stages': t.get('stages') or [],
                 'task_type': t.get('task_type') or '',
                 'pocket': t.get('pocket') or '',
+                'dept_ids': t_dept_ids,
             })
 
         out.sort(key=lambda x: (x['start_date'], x['deadline'], x['name'].lower()))
         pockets = sorted({(_t.get('pocket') or '').strip()
                           for _t in data.get('tasks', [])
                           if (_t.get('pocket') or '').strip()})
+        # Тер банки, встречающиеся в отфильтрованной выборке (для второй таблицы).
+        bank_ids = sorted({did for _o in out for did in _o['dept_ids']})
+        banks = [{'id': bid, 'name': dept_name.get(bid, bid)} for bid in bank_ids]
         return jsonify({
             'success': True,
             'days': days,
             'tasks': out,
             'today': today,
             'pockets': pockets,
+            'banks': banks,
         })
 
     def on_startup(**ctx):
