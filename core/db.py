@@ -37,7 +37,16 @@ TASK_STAGE_LABELS = {
     'оценка_тб': 'Оценка ТБ',
 }
 # Коэффициенты нагрузки на этап (пока все = 1.0, потом скорректируем)
-TASK_STAGE_WEIGHTS = {k: 1.0 for k in TASK_STAGE_ORDER}
+TASK_STAGE_WEIGHTS = {
+    'подготовка': 0.7,
+    'проверка_нжя': 1.0,
+    'проверка_соглЦА': 1.0,
+    'ос_проф': 0.0,
+    'реализация_возражения': 1.0,
+    'реализация_согласования': 0.5,
+    'запас': 0.5,
+    'оценка_тб': 0.0,
+}
 # Цвета этапов для диаграммы Ганта (единый источник правды)
 TASK_STAGE_COLORS = {
     'подготовка': '#5dade2',
@@ -516,7 +525,9 @@ class TrackerDB:
             raise ValueError(_err)
         _task_type = str(payload.get('task_type') or '').strip()
         if _task_type not in TASK_TYPES:
-            _task_type = ''
+            raise ValueError(
+                'Тип задачи обязателен и должен быть одним из: %s'
+                % ', '.join(TASK_TYPES))
         _pocket = str(payload.get('pocket') or '').strip()
         with self.transaction() as tx:
             if row:

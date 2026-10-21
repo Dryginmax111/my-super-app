@@ -17356,3 +17356,95 @@ window.fetch = function(url, opts){
 
 window.__trkLogSaveUnified = true;
 })();
+
+
+/* ============================================================
+   PATCH tasks-6/5 — вкладка «План проверок» в ряд (между Свод и
+   Статистика) + открытие задачи по ?open_task=ID на главной.
+   append-only, guard-флаг, существующий код не трогаем.
+   ============================================================ */
+(function(){
+'use strict';
+if (window.__trkGanttTabAndOpenTaskV1) return;
+window.__trkGanttTabAndOpenTaskV1 = true;
+
+/* --- п.5: отдельная вкладка «План проверок» перед «Статистикой» --- */
+function buildGanttTab(){
+    var tabs = document.querySelector('.tracker-tabs');
+    if (!tabs) return;
+    if (tabs.querySelector('[data-tab-plugin="gantt"]')) return;
+    var statsTab = tabs.querySelector('.tracker-tab[data-tab="stats"]');
+    var perms = window.REESTR_PERMS || {};
+    /* право плагина: если задано в реестре — уважаем; иначе показываем */
+    var reg = (window.__trkPluginRegistry || []).filter(function(p){ return p.id === 'gantt'; })[0];
+    if (reg && reg.perm && perms[reg.perm] === false) return;
+    var url = (reg && reg.url) || '/plugins/gantt/';
+    var btn = document.createElement('button');
+    btn.className = 'tracker-tab';
+    btn.setAttribute('data-tab-plugin', 'gantt');
+    btn.innerHTML = '<span>📅</span><span>План проверок</span>';
+    btn.addEventListener('click', function(e){
+        e.preventDefault();
+        e.stopPropagation();
+        window.location.href = url;
+    });
+    if (statsTab && statsTab.parentNode === tabs) {
+        tabs.insertBefore(btn, statsTab);   /* между «Свод» и «Статистика» */
+    } else {
+        tabs.appendChild(btn);
+    }
+}
+
+/* --- п.6: открыть модалку задачи по ?open_task=ID --- */
+function openTaskFromUrl(){
+    var m = /[?&]open_task=([^&#]+)/.exec(window.location.search || '');
+    if (!m) return;
+    var tid;
+    try { tid = decodeURIComponent(m[1]); } catch (er) { tid = m[1]; }
+    if (!tid) return;
+
+    function clearParam(){
+        try {
+            var u = new URL(window.location.href);
+            u.searchParams.delete('open_task');
+            window.history.replaceState({}, '', u.pathname + (u.search || '') + (u.hash || ''));
+        } catch (er) {}
+    }
+
+    var tries = 0;
+    var timer = setInterval(function(){
+        tries++;
+        var st = window.__trkState;
+        var opener = window.__trkOpenTaskModal;
+        if (st && Array.isArray(st.tasks) && st.tasks.length && typeof opener === 'function') {
+            var t = st.tasks.find(function(x){ return String(x.id) === String(tid); });
+            clearInterval(timer);
+            clearParam();
+            if (t) {
+                /* переключимся на вкладку «Задачи», если есть */
+                var tasksTab = document.querySelector('.tracker-tab[data-tab="tasks"]');
+                if (tasksTab) { try { tasksTab.click(); } catch (er) {} }
+                try { opener(t); } catch (er) { console.error('[open_task]', er); }
+            } else {
+                try { if (window.notify) window.notify('Проверка не найдена: ' + tid, 'error'); } catch (er) {}
+            }
+        } else if (tries > 50) {   /* ~10s максимум */
+            clearInterval(timer);
+        }
+    }, 200);
+}
+
+function init(){
+    buildGanttTab();
+    openTaskFromUrl();
+}
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init);
+} else {
+    init();
+}
+/* повторная попытка — вкладки могут строиться асинхронно */
+setTimeout(buildGanttTab, 600);
+setTimeout(buildGanttTab, 1500);
+
+})();

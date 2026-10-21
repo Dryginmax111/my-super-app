@@ -1,4 +1,4 @@
-"""plugins/gantt.py — Диаграмма Ганта для трекера."""
+"""plugins/gantt.py — План проверок (Гант) для трекера."""
 
 __version__ = '2.0'
 __description__ = 'Диаграмма Ганта: sticky-заголовок, sticky-колонка задач, крупные полосы, светлая/тёмная тема'
@@ -21,7 +21,7 @@ function register(){
     window.__trkRegisterPlugin({
         id: 'gantt',
         icon: '📊',
-        name: 'Диаграмма Ганта',
+        name: 'План проверок',
         url: '/plugins/gantt/',
         perm: 'plugin.gantt.use'
     });
@@ -40,7 +40,7 @@ def _page_html():
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>Диаграмма Ганта</title>
+<title>План проверок</title>
 <script src="/static/plugin_theme.js"></script>
 <script src="/static/plugin_mask.js"></script>
 <style>
@@ -223,6 +223,16 @@ body {
     z-index: 1;
     transition: background 0.12s;
 }
+/* П.3: высота строки = 1.5× ширины столбца (день 44→66, неделя 92→138) */
+.gg-mode-day .gg-row { height: 66px; }
+.gg-mode-week .gg-row { height: 138px; }
+/* П.7: число нагрузки в ячейке недели */
+.gg-wk-load {
+    position: absolute; top: 3px; right: 4px;
+    font-size: 0.66rem; font-weight: 800;
+    color: rgba(0,0,0,0.75);
+    pointer-events: none;
+}
 .gg-row:hover { background: rgba(245,215,110,0.04); }
 
 .gg-name {
@@ -240,6 +250,14 @@ body {
     transition: background 0.12s;
 }
 .gg-row:hover .gg-name { background: var(--pg-inner-bg, #232323); }
+.gg-edit {
+    margin-left: 6px; flex: 0 0 auto;
+    opacity: 0; text-decoration: none;
+    font-size: 0.9rem; cursor: pointer;
+    transition: opacity 0.12s;
+}
+.gg-row:hover .gg-edit { opacity: 0.85; }
+.gg-edit:hover { opacity: 1; }
 .gg-dot {
     width: 9px;
     height: 9px;
@@ -431,6 +449,12 @@ body.trk-theme-light .legend { background: #ffffff; border-top-color: rgba(0,0,0
     opacity: 0.95;
     cursor: default;
 }
+.gg-wk-cell .gg-wk-load-c {
+    position: absolute; left: 0; right: 0; bottom: 4px;
+    text-align: center;
+    font-size: 0.72rem; font-weight: 800;
+    color: rgba(0,0,0,0.78);
+}
 .gg-wk-cell.empty { background: transparent !important; border: none; }
 body.trk-theme-light .gg-slider-wrap { background:#fff; }
 body.trk-theme-light .gg-wk-week { color:#212121; }
@@ -447,7 +471,7 @@ body.trk-theme-light .gg-wk-week { color:#212121; }
 <div class="wrap">
     <div class="head">
         <a class="back" href="/">← К трекеру</a>
-        <h1>📅 Диаграмма Ганта</h1>
+        <h1>📅 План проверок</h1>
         <label>С <input type="date" id="fFrom"></label>
         <label>По <input type="date" id="fTo"></label>
         <select id="fDept"><option value="">Все отделы</option></select>
@@ -463,6 +487,12 @@ body.trk-theme-light .gg-wk-week { color:#212121; }
             <option value="week">Недели</option>
             <option value="day">Дни</option>
         </select></label>
+        <select id="fType">
+            <option value="">Все типы</option>
+            <option value="розничная">Розничная</option>
+            <option value="корпоративная">Корпоративная</option>
+        </select>
+        <select id="fPocket"><option value="">Все карманы</option></select>
         <button class="apply" id="fApply">✓ Показать</button>
     </div>
     <div class="gantt-box" id="ganttBox">
@@ -587,6 +617,20 @@ function loadMeta() {
         });
 }
 
+function fillPocketFilter(pockets) {
+    var sel = document.getElementById('fPocket');
+    if (!sel) return;
+    var cur = sel.value;
+    var html = '<option value="">Все карманы</option>';
+    (pockets || []).forEach(function(p) {
+        if (!p) return;
+        html += '<option value="' + esc(p) + '">' + esc(p) + '</option>';
+    });
+    sel.innerHTML = html;
+    // сохранить выбор, если он ещё есть в списке
+    if (cur && (pockets || []).indexOf(cur) !== -1) sel.value = cur;
+}
+
 function load() {
     var box = document.getElementById('ganttBox');
     box.innerHTML = '<div class="loading">Загрузка…</div>';
@@ -598,10 +642,15 @@ function load() {
     if (team) q += '&team=' + encodeURIComponent(team);
     var sts = document.getElementById('fStatus').value;
     if (sts) q += '&status=' + encodeURIComponent(sts);
+    var fty = document.getElementById('fType').value;
+    if (fty) q += '&task_type=' + encodeURIComponent(fty);
+    var fpk = document.getElementById('fPocket').value;
+    if (fpk) q += '&pocket=' + encodeURIComponent(fpk);
     fetch('/api/plugins/gantt/data' + q, {credentials: 'same-origin'})
         .then(function(r) { return r.json(); })
         .then(function(d) {
             if (!d || !d.success) { box.innerHTML = '<div class="empty">Ошибка загрузки</div>'; return; }
+            fillPocketFilter(d.pockets || []);
             render(d);
         })
         .catch(function() {
@@ -649,7 +698,7 @@ function renderDay(d) {
     }
 
     var trackW = days.length * DAY_W;
-    var html = '<div class="gantt-inner">';
+    var html = '<div class="gantt-inner gg-mode-day">';
 
     /* --- Шапка --- */
     html += '<div class="gg-header">';
@@ -720,6 +769,7 @@ function renderDay(d) {
         html +=     '<span class="gg-dot gg-dot-' + cls + '"></span>';
         html +=     '<span class="gg-ico">' + esc(t.icon || '📋') + '</span>';
         html +=     '<span class="gg-task-name" title="' + esc(t.name) + '">' + esc(t.name) + '</span>';
+        html +=     '<a class="gg-edit" href="/?open_task=' + encodeURIComponent(t.id) + '" title="Редактировать проверку" onclick="event.stopPropagation()">✏️</a>';
         html +=   '</div>';
         html +=   '<div class="gg-track" style="width:' + trackW + 'px">';
         html +=     '<div class="gg-bar gg-bar-' + cls + '" style="left:' + barLeft + 'px;width:' + barWidth + 'px" title="' + esc(title) + '">';
@@ -791,7 +841,7 @@ function renderWeek(d) {
         else { monthSpans.push({ key: key, mi: mi, yr: yr, count: 1 }); }
     });
 
-    var html = '<div class="gantt-inner">';
+    var html = '<div class="gantt-inner gg-mode-week">';
 
     /* Шапка: двухслойная */
     html += '<div class="gg-header" style="height:58px;">';
@@ -830,6 +880,7 @@ function renderWeek(d) {
         html +=     '<span class="gg-dot gg-dot-' + (t.overdue ? 'overdue' : (t.status||'active')) + '"></span>';
         html +=     '<span class="gg-ico">' + esc(t.icon || '📋') + '</span>';
         html +=     '<span class="gg-task-name" title="' + esc(t.name) + '">' + esc(t.name) + '</span>';
+        html +=     '<a class="gg-edit" href="/?open_task=' + encodeURIComponent(t.id) + '" title="Редактировать проверку" onclick="event.stopPropagation()">✏️</a>';
         html +=   '</div>';
         html +=   '<div class="gg-track" style="width:' + trackW + 'px">';
         /* По каждой неделе — цвет этапа, активного в понедельник */
@@ -837,8 +888,11 @@ function renderWeek(d) {
             var st = stageAtMonday(t.stages, w.mon);
             if (!st) return;
             var col = STAGE_COLORS[st.key] || '#888';
-            var ttl = (STAGE_LABELS[st.key] || st.key) + ' · неделя ' + fmtD(w.mon) + '–' + fmtD(w.sun);
-            html += '<div class="gg-wk-cell" style="left:' + (i * WEEK_W + 2) + 'px;width:' + (WEEK_W - 4) + 'px;background:' + col + '" title="' + esc(ttl) + '"></div>';
+            var wt = (st.weight != null ? st.weight : 1);
+            var wtTxt = (Math.round(wt * 100) / 100).toString();
+            var ttl = (STAGE_LABELS[st.key] || st.key) + ' · неделя ' + fmtD(w.mon) + '–' + fmtD(w.sun) + ' · нагрузка ' + wtTxt;
+            html += '<div class="gg-wk-cell" style="left:' + (i * WEEK_W + 2) + 'px;width:' + (WEEK_W - 4) + 'px;background:' + col + '" title="' + esc(ttl) + '">' +
+                    '<span class="gg-wk-load-c">' + wtTxt + '</span></div>';
         });
         html +=   '</div>';
         html += '</div>';
@@ -863,6 +917,8 @@ document.getElementById('fDept').addEventListener('change', load);
 document.getElementById('fTeam').addEventListener('change', load);
 document.getElementById('fStatus').addEventListener('change', load);
 document.getElementById('fView').addEventListener('change', load);
+document.getElementById('fType').addEventListener('change', load);
+document.getElementById('fPocket').addEventListener('change', load);
 initDates();
 loadMeta();
 load();
@@ -944,6 +1000,8 @@ def register(app, db, hooks):
         dept = request.args.get('department', '').strip()
         team = request.args.get('team', '').strip()
         status = request.args.get('status', '').strip()
+        f_type = request.args.get('task_type', '').strip()
+        f_pocket = request.args.get('pocket', '').strip()
 
         data = db.load_all()
 
@@ -978,6 +1036,10 @@ def register(app, db, hooks):
         out = []
         for t in data.get('tasks', []):
             if status and t.get('status') != status:
+                continue
+            if f_type and (t.get('task_type') or '') != f_type:
+                continue
+            if f_pocket and (t.get('pocket') or '') != f_pocket:
                 continue
             assigns = t.get('assignees') or []
             if team_ids is not None and not (set(assigns) & team_ids):
@@ -1015,18 +1077,24 @@ def register(app, db, hooks):
                 'overdue': overdue,
                 'active_days': active_days,
                 'stages': t.get('stages') or [],
+                'task_type': t.get('task_type') or '',
+                'pocket': t.get('pocket') or '',
             })
 
         out.sort(key=lambda x: (x['start_date'], x['deadline'], x['name'].lower()))
+        pockets = sorted({(_t.get('pocket') or '').strip()
+                          for _t in data.get('tasks', [])
+                          if (_t.get('pocket') or '').strip()})
         return jsonify({
             'success': True,
             'days': days,
             'tasks': out,
             'today': today,
+            'pockets': pockets,
         })
 
     def on_startup(**ctx):
-        print('[gantt] готов — кнопка «📅 Гант» в шапке')
+        print('[gantt] готов — «📅 План проверок» в шапке')
 
     hooks.on('on_startup', on_startup)
 
