@@ -270,6 +270,23 @@ body {
     flex: 0 0 auto;
     height: 42px;
 }
+.gg-stage-seg {
+    position: absolute;
+    top: 0;
+    height: 100%;
+    opacity: 0.92;
+    border-right: 1px solid rgba(0,0,0,0.25);
+}
+.gg-stage-seg:last-child { border-right: none; }
+.gg-stage-legend {
+    display: flex; flex-wrap: wrap; gap: 10px 16px;
+    padding: 10px 14px; margin-top: 4px;
+    background: var(--pg-card-bg, #1a1a1a);
+    border: 1px solid var(--pg-card-border, rgba(245,215,110,0.22));
+    border-radius: 12px; font-size: 0.82rem;
+}
+.gg-stage-legend .lg-item { display: inline-flex; align-items: center; gap: 6px; }
+.gg-stage-legend .lg-chip { width: 13px; height: 13px; border-radius: 3px; display: inline-block; }
 .gg-bar {
     position: absolute;
     top: 50%;
@@ -551,6 +568,16 @@ function render(d) {
     });
     html += '</div>';
 
+    /* Этапы задачи (зеркало db.py TASK_STAGE_*) */
+    var STAGE_ORDER = ['подготовка','проверка_нжя','проверка_соглЦА','ос_проф','реализация_возражения','реализация_согласования','запас','оценка_тб'];
+    var STAGE_COLORS = {'подготовка':'#5dade2','проверка_нжя':'#48c9b0','проверка_соглЦА':'#58d68d','ос_проф':'#f4d03f','реализация_возражения':'#eb984e','реализация_согласования':'#e59866','запас':'#af7ac5','оценка_тб':'#ec7063'};
+    var STAGE_LABELS = {'подготовка':'Подготовка','проверка_нжя':'Проверка НЖЯ','проверка_соглЦА':'Проверка согл. ЦА','ос_проф':'ОС проф.','реализация_возражения':'Реализация возражения','реализация_согласования':'Реализация согласования','запас':'Запас','оценка_тб':'Оценка ТБ'};
+    function dayIndex(ds) {
+        if (!ds) return -1;
+        for (var i = 0; i < days.length; i++) { if (days[i] >= ds) return i; }
+        return -1;
+    }
+
     /* Строки задач */
     tasks.forEach(function(t) {
         var cls = t.overdue ? 'overdue' : (t.status || 'active');
@@ -578,8 +605,26 @@ function render(d) {
         html +=   '</div>';
         html +=   '<div class="gg-track" style="width:' + trackW + 'px">';
         html +=     '<div class="gg-bar gg-bar-' + cls + '" style="left:' + barLeft + 'px;width:' + barWidth + 'px" title="' + esc(title) + '">';
+        // Цветные сегменты этапов внутри бара
+        if (t.stages && t.stages.length) {
+            t.stages.forEach(function(st) {
+                if (!st.start) return;
+                var ssi = dayIndex(st.start);
+                if (ssi < 0) return;
+                var sei = st.end ? dayIndex(st.end) : eIdx;
+                if (sei < 0) sei = eIdx;
+                if (sei < ssi) sei = ssi;
+                var segLeft = (ssi - sIdx) * DAY_W;
+                var segWidth = (sei - ssi + 1) * DAY_W;
+                if (segLeft < 0) { segWidth += segLeft; segLeft = 0; }
+                if (segWidth <= 0) return;
+                var col = STAGE_COLORS[st.key] || '#888';
+                var stTitle = (STAGE_LABELS[st.key] || st.key) + ': ' + st.start + (st.end ? ' — ' + st.end : '');
+                html += '<div class="gg-stage-seg" style="left:' + segLeft + 'px;width:' + segWidth + 'px;background:' + col + '" title="' + esc(stTitle) + '"></div>';
+            });
+        }
         if (barWidth > 80) {
-            html +=     '<span class="gg-bar-label">' + esc(t.name) + '</span>';
+            html +=     '<span class="gg-bar-label" style="position:relative;z-index:2">' + esc(t.name) + '</span>';
         }
         html +=     '</div>';
         html +=   '</div>';
@@ -588,6 +633,13 @@ function render(d) {
 
     html += '</div>';  /* gg-body */
     html += '</div>';  /* gantt-inner */
+
+    /* Легенда этапов */
+    html += '<div class="gg-stage-legend">';
+    STAGE_ORDER.forEach(function(k) {
+        html += '<span class="lg-item"><span class="lg-chip" style="background:' + STAGE_COLORS[k] + '"></span>' + STAGE_LABELS[k] + '</span>';
+    });
+    html += '</div>';
 
     box.innerHTML = html;
 }
@@ -748,6 +800,7 @@ def register(app, db, hooks):
                 'deadline': dl or d2_iso,
                 'overdue': overdue,
                 'active_days': active_days,
+                'stages': t.get('stages') or [],
             })
 
         out.sort(key=lambda x: (x['start_date'], x['deadline'], x['name'].lower()))

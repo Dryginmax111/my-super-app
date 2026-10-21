@@ -886,6 +886,22 @@ def create_app():
             print('[INIT] tasks.extra_meta добавлено')
     except Exception as _e:
         print(f'[INIT] migration extra_meta: {_e}')
+    # PATCH tasks-stages — миграция: тип задачи, карман и даты начала этапов
+    try:
+        from db import TASK_STAGE_COLS as _STAGE_COLS
+        cols = [r['name'] for r in db.query('PRAGMA table_info(tasks)')]
+        if 'task_type' not in cols:
+            db.exec("ALTER TABLE tasks ADD COLUMN task_type TEXT DEFAULT ''")
+            print('[INIT] tasks.task_type добавлено')
+        if 'pocket' not in cols:
+            db.exec("ALTER TABLE tasks ADD COLUMN pocket TEXT DEFAULT ''")
+            print('[INIT] tasks.pocket добавлено')
+        for _sc in _STAGE_COLS:
+            if _sc not in cols:
+                db.exec("ALTER TABLE tasks ADD COLUMN %s TEXT DEFAULT ''" % _sc)
+                print('[INIT] tasks.%s добавлено' % _sc)
+    except Exception as _e:
+        print(f'[INIT] migration task stages: {_e}')
     # PATCH v1.0.4 — миграция: JSON-поля в work_logs
     try:
         cols = [r['name'] for r in db.query('PRAGMA table_info(work_logs)')]
@@ -1335,6 +1351,22 @@ def create_app():
         completed_at = str(body.get('completed_at', '')).strip()[:20]
         folder = str(body.get('folder', '')).strip()[:2000]
         order_ref = str(body.get('order_ref', '')).strip()[:1000]
+        # PATCH tasks-stages: тип задачи, карман, даты начала этапов
+        from db import (TASK_TYPES as _TASK_TYPES,
+                        TASK_STAGE_ORDER as _STAGE_ORDER)
+        task_type = str(body.get('task_type', '')).strip()
+        if task_type not in _TASK_TYPES:
+            task_type = ''
+        pocket = str(body.get('pocket', '')).strip()[:200]
+        _stages_raw = body.get('stages') or {}
+        if not isinstance(_stages_raw, dict):
+            _stages_raw = {}
+        stages = {}
+        for _sk in _STAGE_ORDER:
+            _sv = str(_stages_raw.get(_sk, '') or '').strip()[:20]
+            if _sv and not _valid_date(_sv):
+                _sv = ''
+            stages[_sk] = _sv
         # PATCH v1.0.18: метка «очень срочная»
         is_urgent = bool(body.get('is_urgent', False))
         # PATCH v1.0.19: несколько ссылок с описанием
@@ -1518,6 +1550,9 @@ def create_app():
             'is_urgent': is_urgent,
             'links': links,
             'orders': orders,
+            'task_type': task_type,
+            'pocket': pocket,
+            'stages': stages,
         })
         # PATCH v1.0.9: если админ вручную вернул задачу из done в другой
         # статус — снимаем метку авто (статус снова считается решением админа).

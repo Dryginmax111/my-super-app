@@ -13,9 +13,98 @@ import sqlite3
 import threading
 import time
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timedelta
 
 SCHEMA_PATH = Path(__file__).parent / 'schema.sql'
+
+# === Этапы задачи (фича "этапы") =========================================
+# Фиксированный порядок 8 этапов. Хранится ТОЛЬКО дата начала каждого этапа
+# (колонка stage_<key>_start в tasks). Конец этапа вычисляется на лету:
+# день начала следующего непустого этапа - 1; у последнего этапа конец = deadline.
+TASK_STAGE_ORDER = [
+    'подготовка', 'проверка_нжя', 'проверка_соглЦА', 'ос_проф',
+    'реализация_возражения', 'реализация_согласования', 'запас', 'оценка_тб',
+]
+# Человекочитаемые подписи для UI
+TASK_STAGE_LABELS = {
+    'подготовка': 'Подготовка',
+    'проверка_нжя': 'Проверка НЖЯ',
+    'проверка_соглЦА': 'Проверка согл. ЦА',
+    'ос_проф': 'ОС проф.',
+    'реализация_возражения': 'Реализация возражения',
+    'реализация_согласования': 'Реализация согласования',
+    'запас': 'Запас',
+    'оценка_тб': 'Оценка ТБ',
+}
+# Коэффициенты нагрузки на этап (пока все = 1.0, потом скорректируем)
+TASK_STAGE_WEIGHTS = {k: 1.0 for k in TASK_STAGE_ORDER}
+# Цвета этапов для диаграммы Ганта (единый источник правды)
+TASK_STAGE_COLORS = {
+    'подготовка': '#5dade2',
+    'проверка_нжя': '#48c9b0',
+    'проверка_соглЦА': '#58d68d',
+    'ос_проф': '#f4d03f',
+    'реализация_возражения': '#eb984e',
+    'реализация_согласования': '#e59866',
+    'запас': '#af7ac5',
+    'оценка_тб': '#ec7063',
+}
+# Допустимые типы задач
+TASK_TYPES = ['розничная', 'корпоративная']
+# Имена колонок дат начала этапов в таблице tasks
+TASK_STAGE_COLS = ['stage_%s_start' % k for k in TASK_STAGE_ORDER]
+# =========================================================================
+
+
+def _compute_task_stages(task):
+    """Собирает список этапов задачи с вычисленными концами.
+
+    Вход: dict задачи (строка из tasks с колонками stage_<key>_start).
+    Выход: список dict в порядке TASK_STAGE_ORDER:
+        {key, label, weight, color, start, end}
+    start/end — строки 'YYYY-MM-DD' или '' если не определено.
+    Правило конца: начало следующего НЕПУСТОГО этапа - 1 день.
+    Для последнего непустого этапа конец = deadline задачи (если задан).
+    Код не падает при пустых/кривых датах.
+    """
+    deadline = str(task.get('deadline') or '').strip()
+    # Собираем (индекс, ключ, старт) только по заполненным этапам, в порядке.
+    starts = []
+    for idx, key in enumerate(TASK_STAGE_ORDER):
+        sd = str(task.get('stage_%s_start' % key) or '').strip()
+        starts.append(sd)
+
+    def _minus_one_day(ds):
+        try:
+            d = datetime.strptime(ds, '%Y-%m-%d').date() - timedelta(days=1)
+            return d.strftime('%Y-%m-%d')
+        except Exception:
+            return ''
+
+    # Индексы непустых этапов
+    filled = [i for i, sd in enumerate(starts) if sd]
+    out = []
+    for idx, key in enumerate(TASK_STAGE_ORDER):
+        sd = starts[idx]
+        end = ''
+        if sd:
+            # ищем следующий заполненный этап
+            nxt = next((j for j in filled if j > idx), None)
+            if nxt is not None:
+                end = _minus_one_day(starts[nxt])
+            else:
+                # последний заполненный — конец = deadline
+                end = deadline
+        out.append({
+            'key': key,
+            'label': TASK_STAGE_LABELS.get(key, key),
+            'weight': TASK_STAGE_WEIGHTS.get(key, 1.0),
+            'color': TASK_STAGE_COLORS.get(key, '#888888'),
+            'start': sd,
+            'end': end,
+        })
+    return out
+
 
 CACHE_TTL_SEC = 1.5
 BUSY_RETRIES = 6
@@ -247,6 +336,10 @@ class TrackerDB:
             except Exception:
                 _em = []
             t['extra_meta'] = _em
+            # Этапы: собираем производный объект stages из колонок stage_*_start.
+            # Конец этапа = начало следующего НЕПУСТОГО этапа - 1 день;
+            # у последнего заполненного этапа конец = deadline задачи (если задан).
+            t['stages'] = _compute_task_stages(t)
 
         if since:
             logs = self.query(
@@ -392,28 +485,45 @@ class TrackerDB:
     # ---------------- tasks ----------------
     def upsert_task(self, task_id, payload):
         row = self.query_one('SELECT id FROM tasks WHERE id=?', (task_id,))
+        # Этапы задачи: payload['stages'] = {stage_key: 'YYYY-MM-DD'|''}
+        _stages = payload.get('stages') or {}
+        if not isinstance(_stages, dict):
+            _stages = {}
+        _stage_vals = [str(_stages.get(_k) or '').strip() for _k in TASK_STAGE_ORDER]
+        _task_type = str(payload.get('task_type') or '').strip()
+        if _task_type not in TASK_TYPES:
+            _task_type = ''
+        _pocket = str(payload.get('pocket') or '').strip()
         with self.transaction() as tx:
             if row:
                 _links_json = json.dumps(payload.get('links') or [], ensure_ascii=False)
                 _orders_json = json.dumps(payload.get('orders') or [], ensure_ascii=False)
+                _stage_set = ', '.join('%s=?' % c for c in TASK_STAGE_COLS)
                 tx.exec(
                     'UPDATE tasks SET name=?, icon=?, description=?, status=?, start_date=?, '
-                    'deadline=?, completed_at=?, folder=?, order_ref=?, is_urgent=?, links_json=?, orders_json=? WHERE id=?',
+                    'deadline=?, completed_at=?, folder=?, order_ref=?, is_urgent=?, links_json=?, orders_json=?, '
+                    'task_type=?, pocket=?, ' + _stage_set + ' WHERE id=?',
                     (payload['name'], payload['icon'], payload['description'], payload['status'],
                      payload['start_date'], payload['deadline'], payload['completed_at'],
                      payload['folder'], payload['order_ref'],
-                     1 if payload.get('is_urgent') else 0, _links_json, _orders_json, task_id))
+                     1 if payload.get('is_urgent') else 0, _links_json, _orders_json,
+                     _task_type, _pocket, *_stage_vals, task_id))
                 created = False
             else:
                 _links_json = json.dumps(payload.get('links') or [], ensure_ascii=False)
                 _orders_json = json.dumps(payload.get('orders') or [], ensure_ascii=False)
+                _stage_cols_sql = ','.join(TASK_STAGE_COLS)
+                _stage_ph = ','.join('?' for _ in TASK_STAGE_COLS)
                 tx.exec(
                     'INSERT INTO tasks (id,name,icon,description,status,start_date,deadline,'
-                    'completed_at,folder,order_ref,is_urgent,links_json,orders_json,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+                    'completed_at,folder,order_ref,is_urgent,links_json,orders_json,'
+                    'task_type,pocket,' + _stage_cols_sql + ',created_at) '
+                    'VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,' + _stage_ph + ',?)',
                     (task_id, payload['name'], payload['icon'], payload['description'],
                      payload['status'], payload['start_date'], payload['deadline'],
                      payload['completed_at'], payload['folder'], payload['order_ref'],
                      1 if payload.get('is_urgent') else 0, _links_json, _orders_json,
+                     _task_type, _pocket, *_stage_vals,
                      payload['created_at']))
                 created = True
             tx.exec('DELETE FROM task_tags WHERE task_id=?', (task_id,))

@@ -9681,3 +9681,15 @@ body.trk-theme-light .day-assigned-block .dab-tile .dab-add:hover:not(:disabled)
 #dayModal .day-assigned-block {
     display: none !important;
 }
+
+
+/* === Этапы задачи (фича tasks-stages) === */
+.task-stages-list { display: flex; flex-direction: column; gap: 6px; }
+.task-stage-row {
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+    padding: 4px 6px; border-radius: 6px; background: rgba(127,127,127,.06);
+}
+.task-stage-chip { width: 14px; height: 14px; border-radius: 3px; flex: 0 0 auto; box-shadow: 0 0 0 1px rgba(0,0,0,.15) inset; }
+.task-stage-name { flex: 1 1 180px; min-width: 150px; font-size: .86rem; }
+.task-stage-f { display: inline-flex; align-items: center; gap: 4px; font-size: .78rem; opacity: .85; }
+.task-stage-f input[type="date"] { font-size: .8rem; padding: 2px 4px; }

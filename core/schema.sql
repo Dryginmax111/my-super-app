@@ -70,6 +70,20 @@ CREATE TABLE IF NOT EXISTS tasks (
   completed_at TEXT DEFAULT '',
   folder TEXT DEFAULT '',
   order_ref TEXT DEFAULT '',
+  -- Тип задачи: 'розничная' | 'корпоративная' (может быть пустым)
+  task_type TEXT DEFAULT '',
+  -- Карман: свободный текст, редактируется админом
+  pocket TEXT DEFAULT '',
+  -- Даты начала этапов (конец вычисляется: начало следующего непустого - 1 день;
+  -- у последнего этапа 'оценка_тб' конец = deadline задачи)
+  stage_подготовка_start TEXT DEFAULT '',
+  stage_проверка_нжя_start TEXT DEFAULT '',
+  stage_проверка_соглЦА_start TEXT DEFAULT '',
+  stage_ос_проф_start TEXT DEFAULT '',
+  stage_реализация_возражения_start TEXT DEFAULT '',
+  stage_реализация_согласования_start TEXT DEFAULT '',
+  stage_запас_start TEXT DEFAULT '',
+  stage_оценка_тб_start TEXT DEFAULT '',
   created_at TEXT NOT NULL
 );
 

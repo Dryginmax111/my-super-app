@@ -2845,6 +2845,91 @@ function syncTaskCompletedAt() {
     }
     if (!enabled) field.value = '';
 }
+// === Этапы задачи (зеркало backend db.py TASK_STAGE_*) ===============
+var TASK_STAGE_ORDER = [
+    'подготовка','проверка_нжя','проверка_соглЦА','ос_проф',
+    'реализация_возражения','реализация_согласования','запас','оценка_тб'
+];
+var TASK_STAGE_LABELS = {
+    'подготовка':'Подготовка','проверка_нжя':'Проверка НЖЯ',
+    'проверка_соглЦА':'Проверка согл. ЦА','ос_проф':'ОС проф.',
+    'реализация_возражения':'Реализация возражения',
+    'реализация_согласования':'Реализация согласования',
+    'запас':'Запас','оценка_тб':'Оценка ТБ'
+};
+var TASK_STAGE_COLORS = {
+    'подготовка':'#5dade2','проверка_нжя':'#48c9b0','проверка_соглЦА':'#58d68d',
+    'ос_проф':'#f4d03f','реализация_возражения':'#eb984e',
+    'реализация_согласования':'#e59866','запас':'#af7ac5','оценка_тб':'#ec7063'
+};
+var _taskStagesDraft = {};
+
+function _stageDayShift(ds, delta) {
+    if (!ds) return '';
+    var d = new Date(ds + 'T00:00:00');
+    if (isNaN(d.getTime())) return '';
+    d.setDate(d.getDate() + delta);
+    var mm = ('0' + (d.getMonth()+1)).slice(-2);
+    var dd = ('0' + d.getDate()).slice(-2);
+    return d.getFullYear() + '-' + mm + '-' + dd;
+}
+function _stageEnd(idx) {
+    var startKey = TASK_STAGE_ORDER[idx];
+    if (!_taskStagesDraft[startKey]) return '';
+    for (var j = idx + 1; j < TASK_STAGE_ORDER.length; j++) {
+        if (_taskStagesDraft[TASK_STAGE_ORDER[j]]) {
+            return _stageDayShift(_taskStagesDraft[TASK_STAGE_ORDER[j]], -1);
+        }
+    }
+    var dl = $('task_deadline') ? $('task_deadline').value.trim() : '';
+    return dl || '';
+}
+function _fillPocketOptions() {
+    var dl = $('taskPocketOptions');
+    if (!dl) return;
+    var seen = {}, opts = [];
+    (state.tasks || []).forEach(function(t){
+        var p = (t.pocket || '').trim();
+        if (p && !seen[p]) { seen[p] = 1; opts.push(p); }
+    });
+    opts.sort();
+    dl.innerHTML = opts.map(function(p){ return '<option value="' + escapeHtml(p) + '">'; }).join('');
+}
+
+function renderTaskStages() {
+    var box = $('taskStagesList');
+    if (!box) return;
+    var html = '';
+    TASK_STAGE_ORDER.forEach(function(key, idx) {
+        var start = _taskStagesDraft[key] || '';
+        var end = _stageEnd(idx);
+        var col = TASK_STAGE_COLORS[key] || '#888';
+        var isLast = (idx === TASK_STAGE_ORDER.length - 1);
+        html += '<div class="task-stage-row">';
+        html +=   '<span class="task-stage-chip" style="background:' + col + '"></span>';
+        html +=   '<span class="task-stage-name">' + escapeHtml(TASK_STAGE_LABELS[key] || key) + '</span>';
+        html +=   '<label class="task-stage-f">\u043d\u0430\u0447. <input type="date" class="task-stage-start" data-stage="' + key + '" value="' + start + '"></label>';
+        html +=   '<label class="task-stage-f">\u043a\u043e\u043d. <input type="date" class="task-stage-end" data-stage-idx="' + idx + '" value="' + end + '"' + (isLast ? ' disabled' : '') + '></label>';
+        html += '</div>';
+    });
+    box.innerHTML = html;
+    box.querySelectorAll('.task-stage-start').forEach(function(inp){
+        inp.addEventListener('change', function(){
+            _taskStagesDraft[this.getAttribute('data-stage')] = this.value || '';
+            renderTaskStages();
+        });
+    });
+    box.querySelectorAll('.task-stage-end').forEach(function(inp){
+        inp.addEventListener('change', function(){
+            var idx = parseInt(this.getAttribute('data-stage-idx'), 10);
+            var nextKey = TASK_STAGE_ORDER[idx+1];
+            if (!nextKey) return;
+            _taskStagesDraft[nextKey] = this.value ? _stageDayShift(this.value, 1) : '';
+            renderTaskStages();
+        });
+    });
+}
+
 function openTaskModal(task) {
     task = task || null;
     var t = $('taskModalTitle'); if (t) t.textContent = task ? 'Редактировать задачу' : 'Новая задача';
@@ -2870,6 +2955,22 @@ function openTaskModal(task) {
     // PATCH v1.0.32: список приказов
     _taskOrdersDraft = (task && Array.isArray(task.orders)) ? task.orders.slice() : [];
     renderTaskOrdersDraft();
+    // PATCH tasks-stages: тип задачи, карман, этапы
+    g('task_type', (task && task.task_type) || '');
+    g('task_pocket', (task && task.pocket) || '');
+    _fillPocketOptions();
+    _taskStagesDraft = {};
+    if (task && Array.isArray(task.stages)) {
+        task.stages.forEach(function(s){
+            if (s && s.key) _taskStagesDraft[s.key] = s.start || '';
+        });
+    } else if (task) {
+        TASK_STAGE_ORDER.forEach(function(k){
+            var v = task['stage_' + k + '_start'];
+            if (v) _taskStagesDraft[k] = v;
+        });
+    }
+    renderTaskStages();
 
     _tagDraft = (task && task.tags) ? task.tags.slice() : [];
     var ti = $('task_tags_input'); if (ti) ti.value = '';
@@ -2904,6 +3005,9 @@ function saveTask() {
         is_urgent: $('task_is_urgent') ? !!$('task_is_urgent').checked : false,
         links: (_taskLinksDraft || []).slice(),
         orders: (_taskOrdersDraft || []).slice(),
+        task_type: $('task_type') ? $('task_type').value : '',
+        pocket: $('task_pocket') ? $('task_pocket').value.trim() : '',
+        stages: (function(){ var o = {}; TASK_STAGE_ORDER.forEach(function(k){ o[k] = _taskStagesDraft[k] || ''; }); return o; })(),
     };
     // PATCH v1.0.15: закрываем карточку СРАЗУ — пользователь видит
     // лоадер («Загрузка…»), а не пустую модалку. При ошибке вернём.

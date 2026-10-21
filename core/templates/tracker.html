@@ -440,6 +440,25 @@
         <div class="form-group"><label>🚀 Начало</label><input type="date" id="task_start_date"></div>
         <div class="form-group"><label>⏰ Дедлайн</label><input type="date" id="task_deadline"></div>
     </div>
+    <div class="form-row">
+        <div class="form-group"><label>🧩 Тип задачи</label>
+            <select id="task_type">
+                <option value="">— не указан —</option>
+                <option value="розничная">Розничная</option>
+                <option value="корпоративная">Корпоративная</option>
+            </select>
+        </div>
+        <div class="form-group"><label>👝 Карман</label>
+            <input type="text" id="task_pocket" list="taskPocketOptions" maxlength="200" autocomplete="off" placeholder="например: Ипотека">
+            <datalist id="taskPocketOptions"></datalist>
+            <div class="assignees-hint">Свободный текст. Подсказки — из уже использованных карманов.</div>
+        </div>
+    </div>
+    <div class="form-group" id="taskStagesGroup">
+        <label>📊 Этапы задачи</label>
+        <div class="task-stages-list" id="taskStagesList"></div>
+        <div class="assignees-hint">Указывается только дата начала этапа. Конец подтягивается автоматически (начало следующего этапа − 1 день); у последнего этапа — дедлайн задачи. Можно задать конец вручную — тогда начало следующего не трогается.</div>
+    </div>
     <div class="form-group" id="taskLinksGroup">
         <label>🔗 Ссылки</label>
         <div id="taskLinksList" class="task-links-list"></div>
