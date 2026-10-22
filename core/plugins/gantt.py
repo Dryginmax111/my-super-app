@@ -517,6 +517,21 @@ body.trk-theme-light .gg-wk-week { color:#212121; }
     background: var(--pg-input-bg, #232323);
     border: 1px solid var(--pg-card-border-soft, rgba(245,215,110,0.18));
 }
+/* П.2/П.3: раскрытие банков-участников под названием проверки */
+.gg-task-name.gg-expandable { cursor: pointer; user-select: none; }
+.gg-task-name.gg-expandable:hover { text-decoration: underline; }
+.gg-caret {
+    display: inline-block; width: 0.9em; margin-right: 2px;
+    font-size: 0.7rem; color: var(--pg-meta, #999);
+    transition: transform 0.12s ease;
+}
+.gg-row.gg-sub-row { background: rgba(255,255,255,0.025); }
+.gg-row.gg-sub-row .gg-name { padding-left: 10px; }
+.gg-sub-name .gg-sub-bullet { margin-right: 6px; opacity: 0.8; }
+.gg-row.gg-sub-lead { background: rgba(245,215,110,0.07); }
+.gg-row.gg-sub-lead .gg-task-name { font-weight: 700; }
+body.trk-theme-light .gg-row.gg-sub-row { background: rgba(0,0,0,0.03); }
+body.trk-theme-light .gg-row.gg-sub-lead { background: rgba(245,215,110,0.14); }
 /* Тепловая заливка по величине нагрузки */
 .gg-bank-cell.lvl0 { background: transparent; border-color: transparent; color: var(--pg-meta,#888); }
 .gg-bank-cell.lvl1 { background: rgba(129,199,132,0.28); color:#dfeede; }  /* <2 — светло-зелёный */
@@ -686,6 +701,72 @@ function stageAtMonday(stages, mon) {
     return null;
 }
 
+/* П.2: коэффициент руководителя проверки.
+   Применяется ТОЛЬКО к банку-руководителю этой задачи:
+   розничная -> x2, корпоративная -> x1.5, иначе (или рядовой банк) -> x1. */
+function leadCoef(task, bankId) {
+    if (!task || !bankId) return 1;
+    if ((task.lead_department || '') !== bankId) return 1;
+    var tp = task.task_type || '';
+    if (tp === 'розничная') return 2;
+    if (tp === 'корпоративная') return 1.5;
+    return 1;
+}
+/* Нагрузка задачи в неделю для КОНКРЕТНОГО банка (с учётом коэффициента). */
+function taskBankLoadAtMonday(task, bankId, mon) {
+    var st = stageAtMonday(task.stages, mon);
+    if (!st) return 0;
+    var wt = (st.weight != null ? st.weight : 1);
+    return wt * leadCoef(task, bankId);
+}
+function round2(v) { return Math.round(v * 100) / 100; }
+
+/* Множество раскрытых задач (id). Клик по названию переключает. */
+var ggExpanded = {};
+var ggDeptNames = {};
+
+/* Подстроки «банки-участники» задачи для верхней таблицы.
+   mode='week' -> периоды=weeks (у каждого .mon), mode='day' -> периоды=days (iso).
+   Для каждого банка задачи выводим его нагрузку по периодам с коэффициентом
+   руководителя (у банка-руководителя 👑 и бонус x2/x1.5). cellW — ширина колонки. */
+function participantRowsHtml(t, periods, mode, trackW, cellW) {
+    if (!ggExpanded[t.id]) return '';
+    var dids = t.dept_ids || [];
+    if (!dids.length) return '';
+    var lead = t.lead_department || '';
+    /* руководитель первым, остальные по алфавиту имени */
+    var ordered = dids.slice().sort(function(a, b) {
+        if (a === lead && b !== lead) return -1;
+        if (b === lead && a !== lead) return 1;
+        var na = ggDeptNames[a] || a, nb = ggDeptNames[b] || b;
+        return na.localeCompare(nb, 'ru');
+    });
+    var html = '';
+    ordered.forEach(function(did) {
+        var isLead = (did === lead);
+        var nm = ggDeptNames[did] || did;
+        html += '<div class="gg-row gg-sub-row' + (isLead ? ' gg-sub-lead' : '') + '">';
+        html +=   '<div class="gg-name gg-sub-name">';
+        html +=     '<span class="gg-sub-bullet">' + (isLead ? '\ud83d\udc51' : '\u2514') + '</span>';
+        html +=     '<span class="gg-task-name" title="' + esc(nm) + '">' + esc(nm) + '</span>';
+        html +=   '</div>';
+        html +=   '<div class="gg-track" style="width:' + trackW + 'px">';
+        periods.forEach(function(p, i) {
+            var mon = (mode === 'week') ? p.mon : p;
+            var v = taskBankLoadAtMonday(t, did, mon);
+            if (v <= 0) return;
+            var txt = round2(v).toString();
+            var lvl = v >= 3 ? 3 : (v < 2 ? 1 : 2);
+            html += '<div class="gg-bank-cell lvl' + lvl + '" style="left:' + (i * cellW + 2) +
+                    'px;width:' + (cellW - 4) + 'px" title="' + esc(nm) +
+                    (isLead ? ' 👑' : '') + ' · нагрузка ' + txt + '">' + txt + '</div>';
+        });
+        html +=   '</div>';
+        html += '</div>';
+    });
+    return html;
+}
+
 /* ---- Мультивыбор (Excel-стиль, чекбоксы) для карман / тер банк ---- */
 /* Состояние: Set выбранных значений. Пусто = «все». */
 var msSelected = { dept: {}, pocket: {} };
@@ -822,14 +903,10 @@ function load() {
 
 function render(d) {
     window.__ggLastData = d;
+    ggDeptNames = d.dept_names || {};
     var view = document.getElementById('fView').value;
     if (view === 'week') { renderWeek(d); }
-    else {
-        // Вторая таблица (нагрузка по тер банкам) только в недельном режиме
-        document.getElementById('banksTitle').style.display = 'none';
-        document.getElementById('banksBox').style.display = 'none';
-        renderDay(d);
-    }
+    else { renderDay(d); }
     setupSlider();
 }
 
@@ -942,11 +1019,12 @@ function renderDay(d) {
         var title = t.name + ' · ' + t.start_date + ' — ' + t.deadline +
                     (t.overdue ? ' · ПРОСРОЧЕНО' : '');
 
-        html += '<div class="gg-row">';
+        html += '<div class="gg-row gg-task-row" data-tid="' + esc(t.id) + '">';
         html +=   '<div class="gg-name">';
         html +=     '<span class="gg-dot gg-dot-' + cls + '"></span>';
         html +=     '<span class="gg-ico">' + esc(t.icon || '📋') + '</span>';
-        html +=     '<span class="gg-task-name" title="' + esc(t.name) + '">' + esc(t.name) + '</span>';
+        html +=     '<span class="gg-task-name gg-expandable" data-exp-tid="' + esc(t.id) + '" title="Показать банки-участники">' +
+                      '<span class="gg-caret">\u25b8</span>' + esc(t.name) + '</span>';
         html +=     '<a class="gg-edit" href="/?open_task=' + encodeURIComponent(t.id) + '" title="Редактировать" aria-label="Редактировать" onclick="event.stopPropagation()">\u270f\ufe0f</a>';
         html +=   '</div>';
         html +=   '<div class="gg-track" style="width:' + trackW + 'px">';
@@ -975,6 +1053,8 @@ function renderDay(d) {
         html +=     '</div>';
         html +=   '</div>';
         html += '</div>';
+        /* П.3: раскрытые банки-участники под задачей (дневной режим) */
+        html += participantRowsHtml(t, days, 'day', trackW, DAY_W);
     });
 
     html += '</div>';  /* gg-body */
@@ -988,6 +1068,9 @@ function renderDay(d) {
     html += '</div>';
 
     box.innerHTML = html;
+
+    /* П.3: вторая таблица «Нагрузка по тер банкам» в дневном режиме */
+    renderBanks(d, days, 'day', DAY_W, STAGE_COLORS, STAGE_LABELS);
 }
 
 function renderWeek(d) {
@@ -1053,27 +1136,30 @@ function renderWeek(d) {
     html += '</div>';
 
     tasks.forEach(function(t) {
-        html += '<div class="gg-row">';
+        html += '<div class="gg-row gg-task-row" data-tid="' + esc(t.id) + '">';
         html +=   '<div class="gg-name">';
         html +=     '<span class="gg-dot gg-dot-' + (t.overdue ? 'overdue' : (t.status||'active')) + '"></span>';
         html +=     '<span class="gg-ico">' + esc(t.icon || '📋') + '</span>';
-        html +=     '<span class="gg-task-name" title="' + esc(t.name) + '">' + esc(t.name) + '</span>';
+        html +=     '<span class="gg-task-name gg-expandable" data-exp-tid="' + esc(t.id) + '" title="Показать банки-участники">' +
+                      '<span class="gg-caret">\u25b8</span>' + esc(t.name) + '</span>';
         html +=     '<a class="gg-edit" href="/?open_task=' + encodeURIComponent(t.id) + '" title="Редактировать" aria-label="Редактировать" onclick="event.stopPropagation()">\u270f\ufe0f</a>';
         html +=   '</div>';
         html +=   '<div class="gg-track" style="width:' + trackW + 'px">';
-        /* По каждой неделе — цвет этапа, активного в понедельник */
+        /* По каждой неделе — цвет этапа, активного в понедельник (свёрнуто = x1) */
         weeks.forEach(function(w, i) {
             var st = stageAtMonday(t.stages, w.mon);
             if (!st) return;
             var col = STAGE_COLORS[st.key] || '#888';
             var wt = (st.weight != null ? st.weight : 1);
-            var wtTxt = (Math.round(wt * 100) / 100).toString();
+            var wtTxt = round2(wt).toString();
             var ttl = (STAGE_LABELS[st.key] || st.key) + ' · неделя ' + fmtD(w.mon) + '–' + fmtD(w.sun) + ' · нагрузка ' + wtTxt;
             html += '<div class="gg-wk-cell" style="left:' + (i * WEEK_W + 2) + 'px;width:' + (WEEK_W - 4) + 'px;background:' + col + '" title="' + esc(ttl) + '">' +
                     '<span class="gg-wk-load-c">' + wtTxt + '</span></div>';
         });
         html +=   '</div>';
         html += '</div>';
+        /* П.2/П.3: раскрытые банки-участники под задачей */
+        html += participantRowsHtml(t, weeks, 'week', trackW, WEEK_W);
     });
 
     html += '</div>';  /* gg-body */
@@ -1089,19 +1175,21 @@ function renderWeek(d) {
     box.innerHTML = html;
 
     /* П.6 обновления: вторая таблица — нагрузка по тер банкам */
-    renderBanks(d, weeks, STAGE_COLORS, STAGE_LABELS);
+    renderBanks(d, weeks, 'week', WEEK_W, STAGE_COLORS, STAGE_LABELS);
 }
 
 /* Строит таблицу "Нагрузка по тер банкам": строки — банки,
-   столбцы — те же недели; значение = сумма весов этапов всех задач
-   банка, активных в понедельник недели. Фильтры уже применены на бэке. */
-function renderBanks(d, weeks, STAGE_COLORS, STAGE_LABELS) {
+   столбцы — те же периоды (недели ИЛИ дни), значение = сумма весов
+   этапов всех задач банка, активных в этом периоде, с коэффициентом
+   руководителя (x2 розн / x1.5 корп у банка-руководителя). mode='week'|'day'.
+   Фильтры уже применены на бэке. */
+function renderBanks(d, periods, mode, cellW, STAGE_COLORS, STAGE_LABELS) {
     var titleEl = document.getElementById('banksTitle');
     var box = document.getElementById('banksBox');
     var banks = d.banks || [];
     var tasks = d.tasks || [];
 
-    if (!banks.length || !weeks.length) {
+    if (!banks.length || !periods.length) {
         titleEl.style.display = 'none';
         box.style.display = 'none';
         return;
@@ -1109,56 +1197,78 @@ function renderBanks(d, weeks, STAGE_COLORS, STAGE_LABELS) {
     titleEl.style.display = 'block';
     box.style.display = 'block';
 
+    var isWeek = (mode === 'week');
     var todayMon = d.today ? mondayOf(d.today) : '';
-    var trackW = weeks.length * WEEK_W;
+    var today = d.today || '';
+    var trackW = periods.length * cellW;
 
-    /* Матрица: load[bankId][weekIdx] = сумма весов */
+    /* ключ периода -> дата для расчёта активного этапа (пн недели / сам день) */
+    function pMon(p) { return isWeek ? p.mon : p; }
+
+    /* Матрица: load[bankId][idx] = сумма весов с коэффициентом */
     var load = {};
     banks.forEach(function(b) {
         load[b.id] = [];
-        for (var i = 0; i < weeks.length; i++) load[b.id].push(0);
+        for (var i = 0; i < periods.length; i++) load[b.id].push(0);
     });
     tasks.forEach(function(t) {
         var dids = t.dept_ids || [];
         if (!dids.length) return;
-        weeks.forEach(function(w, i) {
-            var st = stageAtMonday(t.stages, w.mon);
+        periods.forEach(function(p, i) {
+            var mon = pMon(p);
+            var st = stageAtMonday(t.stages, mon);
             if (!st) return;
             var wt = (st.weight != null ? st.weight : 1);
             dids.forEach(function(did) {
-                if (load[did]) load[did][i] += wt;
+                if (load[did]) load[did][i] += wt * leadCoef(t, did);
             });
         });
     });
 
-    /* Группировка недель по месяцам (как в основной таблице) */
-    var monthSpans = [];
-    weeks.forEach(function(w) {
-        var mi = parseInt(w.mon.split('-')[1], 10) - 1;
-        var yr = w.mon.split('-')[0];
-        var key = yr + '-' + mi;
-        var last = monthSpans[monthSpans.length - 1];
-        if (last && last.key === key) { last.count++; }
-        else { monthSpans.push({ key: key, mi: mi, yr: yr, count: 1 }); }
-    });
-
-    var html = '<div class="gantt-inner gg-mode-week">';
-    /* Шапка — те же недели */
-    html += '<div class="gg-header" style="height:70px;">';
+    var html = '<div class="gantt-inner gg-mode-' + (isWeek ? 'week' : 'day') + '">';
+    html += '<div class="gg-header"' + (isWeek ? ' style="height:70px;"' : '') + '>';
     html += '<div class="gg-corner">Тер банк</div>';
-    html += '<div class="gg-wk-head">';
-    html += '<div class="gg-wk-months">';
-    monthSpans.forEach(function(m) {
-        var col = MONTH_COLORS[m.mi % MONTH_COLORS.length];
-        html += '<div class="gg-wk-month" style="width:' + (m.count * WEEK_W) + 'px;background:' + col + '">' + MONTH_NAMES[m.mi] + '</div>';
-    });
-    html += '</div>';
-    html += '<div class="gg-wk-weeks">';
-    weeks.forEach(function(w) {
-        var cls = 'gg-wk-week' + (w.mon === todayMon ? ' today' : '');
-        html += '<div class="' + cls + '" style="width:' + WEEK_W + 'px" title="' + w.mon + ' — ' + w.sun + '">' + fmtD(w.mon) + '–<br>' + fmtD(w.sun) + '</div>';
-    });
-    html += '</div></div></div>';
+
+    if (isWeek) {
+        /* двухслойная шапка: месяцы + недели */
+        var monthSpans = [];
+        periods.forEach(function(w) {
+            var mi = parseInt(w.mon.split('-')[1], 10) - 1;
+            var yr = w.mon.split('-')[0];
+            var key = yr + '-' + mi;
+            var last = monthSpans[monthSpans.length - 1];
+            if (last && last.key === key) { last.count++; }
+            else { monthSpans.push({ key: key, mi: mi, yr: yr, count: 1 }); }
+        });
+        html += '<div class="gg-wk-head">';
+        html += '<div class="gg-wk-months">';
+        monthSpans.forEach(function(m) {
+            var col = MONTH_COLORS[m.mi % MONTH_COLORS.length];
+            html += '<div class="gg-wk-month" style="width:' + (m.count * cellW) + 'px;background:' + col + '">' + MONTH_NAMES[m.mi] + '</div>';
+        });
+        html += '</div>';
+        html += '<div class="gg-wk-weeks">';
+        periods.forEach(function(w) {
+            var cls = 'gg-wk-week' + (w.mon === todayMon ? ' today' : '');
+            html += '<div class="' + cls + '" style="width:' + cellW + 'px" title="' + w.mon + ' — ' + w.sun + '">' + fmtD(w.mon) + '–<br>' + fmtD(w.sun) + '</div>';
+        });
+        html += '</div></div></div>';
+    } else {
+        /* однослойная шапка по дням */
+        html += '<div class="gg-days">';
+        periods.forEach(function(dk) {
+            var dt = new Date(dk + 'T00:00:00');
+            var wd = dt.getDay();
+            var cls = 'gg-day';
+            if (wd === 0 || wd === 6) cls += ' weekend';
+            if (dk === today) cls += ' today';
+            html += '<div class="' + cls + '" style="width:' + cellW + 'px">';
+            html += '<span class="gg-dow">' + DOW[wd] + '</span>';
+            html += '<span class="gg-date">' + fmtD(dk) + '</span>';
+            html += '</div>';
+        });
+        html += '</div></div>';
+    }
 
     /* Тело — строки банков */
     html += '<div class="gg-body">';
@@ -1169,17 +1279,13 @@ function renderBanks(d, weeks, STAGE_COLORS, STAGE_LABELS) {
         html +=     '<span class="gg-task-name" title="' + esc(b.name) + '">' + esc(b.name) + '</span>';
         html +=   '</div>';
         html +=   '<div class="gg-track" style="width:' + trackW + 'px">';
-        weeks.forEach(function(w, i) {
+        periods.forEach(function(p, i) {
             var v = load[b.id][i];
-            var txt = (Math.round(v * 100) / 100).toString();
-            /* п.2: >=3 светло-красный, <2 светло-зелёный, иначе светло-жёлтый */
+            var txt = round2(v).toString();
             var lvl = 0;
-            if (v > 0) {
-                if (v >= 3) lvl = 3;
-                else if (v < 2) lvl = 1;
-                else lvl = 2;
-            }
-            html += '<div class="gg-bank-cell lvl' + lvl + '" style="left:' + (i * WEEK_W + 2) + 'px;width:' + (WEEK_W - 4) + 'px" title="' + esc(b.name) + ' · неделя ' + fmtD(w.mon) + '–' + fmtD(w.sun) + ' · нагрузка ' + txt + '">' + (v > 0 ? txt : '') + '</div>';
+            if (v > 0) { lvl = v >= 3 ? 3 : (v < 2 ? 1 : 2); }
+            var lbl = isWeek ? ('неделя ' + fmtD(p.mon) + '–' + fmtD(p.sun)) : fmtD(p);
+            html += '<div class="gg-bank-cell lvl' + lvl + '" style="left:' + (i * cellW + 2) + 'px;width:' + (cellW - 4) + 'px" title="' + esc(b.name) + ' · ' + lbl + ' · нагрузка ' + txt + '">' + (v > 0 ? txt : '') + '</div>';
         });
         html +=   '</div>';
         html += '</div>';
@@ -1200,6 +1306,20 @@ msInit();
 initDates();
 loadMeta();
 load();
+
+/* П.2/П.3: клик по названию проверки раскрывает/сворачивает банки-участники.
+   Делегированный обработчик — строки перерисовываются при каждом load(). */
+document.addEventListener('click', function(ev) {
+    var el = ev.target.closest ? ev.target.closest('.gg-expandable') : null;
+    if (!el) return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    var tid = el.getAttribute('data-exp-tid');
+    if (!tid) return;
+    if (ggExpanded[tid]) delete ggExpanded[tid];
+    else ggExpanded[tid] = true;
+    if (window.__ggLastData) render(window.__ggLastData);
+});
 
 })();
 </script>
@@ -1392,6 +1512,9 @@ def register(app, db, hooks):
                 'task_type': t.get('task_type') or '',
                 'pocket': t.get('pocket') or '',
                 'dept_ids': t_dept_ids,
+                # П.2: руководитель проверки — для коэффициента нагрузки и 👑
+                'lead_department': t.get('lead_department') or '',
+                'lead_employee': t.get('lead_employee') or '',
             })
 
         out.sort(key=lambda x: (x['start_date'], x['deadline'], x['name'].lower()))
@@ -1414,6 +1537,7 @@ def register(app, db, hooks):
             'today': today,
             'pockets': pockets,
             'banks': banks,
+            'dept_names': dept_name,
         })
 
     def on_startup(**ctx):
