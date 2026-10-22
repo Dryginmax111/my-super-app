@@ -287,12 +287,19 @@ body {
 .gg-row:hover .gg-name { background: var(--pg-inner-bg, #232323); }
 .gg-edit {
     margin-left: 6px; flex: 0 0 auto;
-    opacity: 0; text-decoration: none;
-    font-size: 0.9rem; cursor: pointer;
-    transition: opacity 0.12s;
+    opacity: 0.55; text-decoration: none;
+    font-size: 0.72rem; cursor: pointer;
+    transition: opacity 0.12s, background 0.12s;
+    border: 1px solid var(--pg-border, rgba(255,255,255,0.18));
+    background: var(--pg-inner-bg, rgba(255,255,255,0.06));
+    color: var(--pg-text, #e8e8e8);
+    border-radius: 5px; padding: 1px 7px; line-height: 1.5;
+    font-family: inherit; white-space: nowrap;
 }
-.gg-row:hover .gg-edit { opacity: 0.85; }
-.gg-edit:hover { opacity: 1; }
+.gg-row:hover .gg-edit { opacity: 1; }
+.gg-edit:hover { opacity: 1; background: var(--pg-accent-soft, rgba(245,215,110,0.22)); }
+body.trk-theme-light .gg-edit { color:#1b5e20; background:#eef3ee; border-color:rgba(0,0,0,0.15); }
+body.trk-theme-light .gg-edit:hover { background:#dceadc; }
 .gg-dot {
     width: 9px;
     height: 9px;
@@ -512,17 +519,18 @@ body.trk-theme-light .gg-wk-week { color:#212121; }
 }
 /* Тепловая заливка по величине нагрузки */
 .gg-bank-cell.lvl0 { background: transparent; border-color: transparent; color: var(--pg-meta,#888); }
-.gg-bank-cell.lvl1 { background: rgba(93,173,226,0.25); }
-.gg-bank-cell.lvl2 { background: rgba(88,214,141,0.30); }
-.gg-bank-cell.lvl3 { background: rgba(244,208,63,0.38); color:#2a2300; }
-.gg-bank-cell.lvl4 { background: rgba(235,152,78,0.45); color:#2a1600; }
-.gg-bank-cell.lvl5 { background: rgba(236,112,99,0.55); color:#2a0a06; }
+.gg-bank-cell.lvl1 { background: rgba(129,199,132,0.28); color:#dfeede; }  /* <2 — светло-зелёный */
+.gg-bank-cell.lvl2 { background: rgba(255,224,130,0.30); color:#2a2300; }  /* 2..3 — светло-жёлтый */
+.gg-bank-cell.lvl3 { background: rgba(239,154,154,0.32); color:#2a0a06; }  /* >=3 — светло-красный */
 .gg-bank-total {
     font-weight: 800; color: var(--pg-accent, #f5d76e);
 }
 body.trk-theme-light .banks-title { color:#1b5e20; }
 body.trk-theme-light .gg-bank-cell { color:#212121; background:#f1f3f4; border-color:rgba(0,0,0,0.1); }
 body.trk-theme-light .gg-bank-cell.lvl0 { background:transparent; border-color:transparent; color:#999; }
+body.trk-theme-light .gg-bank-cell.lvl1 { background:#d7efd8; color:#1b5e20; }
+body.trk-theme-light .gg-bank-cell.lvl2 { background:#fff3c4; color:#7a5c00; }
+body.trk-theme-light .gg-bank-cell.lvl3 { background:#fcdada; color:#9b1c1c; }
 
 @media (max-width: 700px) {
     .gg-corner, .gg-name { flex-basis: 220px; width: 220px; }
@@ -813,6 +821,7 @@ function load() {
 }
 
 function render(d) {
+    window.__ggLastData = d;
     var view = document.getElementById('fView').value;
     if (view === 'week') { renderWeek(d); }
     else {
@@ -938,7 +947,7 @@ function renderDay(d) {
         html +=     '<span class="gg-dot gg-dot-' + cls + '"></span>';
         html +=     '<span class="gg-ico">' + esc(t.icon || '📋') + '</span>';
         html +=     '<span class="gg-task-name" title="' + esc(t.name) + '">' + esc(t.name) + '</span>';
-        html +=     '<a class="gg-edit" href="/?open_task=' + encodeURIComponent(t.id) + '" title="Редактировать проверку" onclick="event.stopPropagation()">✏️</a>';
+        html +=     '<button type="button" class="gg-edit" data-edit-tid="' + encodeURIComponent(t.id) + '" title="Редактировать проверку" onclick="event.stopPropagation()">Редактировать</button>';
         html +=   '</div>';
         html +=   '<div class="gg-track" style="width:' + trackW + 'px">';
         html +=     '<div class="gg-bar gg-bar-' + cls + '" style="left:' + barLeft + 'px;width:' + barWidth + 'px" title="' + esc(title) + '">';
@@ -1049,7 +1058,7 @@ function renderWeek(d) {
         html +=     '<span class="gg-dot gg-dot-' + (t.overdue ? 'overdue' : (t.status||'active')) + '"></span>';
         html +=     '<span class="gg-ico">' + esc(t.icon || '📋') + '</span>';
         html +=     '<span class="gg-task-name" title="' + esc(t.name) + '">' + esc(t.name) + '</span>';
-        html +=     '<a class="gg-edit" href="/?open_task=' + encodeURIComponent(t.id) + '" title="Редактировать проверку" onclick="event.stopPropagation()">✏️</a>';
+        html +=     '<button type="button" class="gg-edit" data-edit-tid="' + encodeURIComponent(t.id) + '" title="Редактировать проверку" onclick="event.stopPropagation()">Редактировать</button>';
         html +=   '</div>';
         html +=   '<div class="gg-track" style="width:' + trackW + 'px">';
         /* По каждой неделе — цвет этапа, активного в понедельник */
@@ -1163,12 +1172,13 @@ function renderBanks(d, weeks, STAGE_COLORS, STAGE_LABELS) {
         weeks.forEach(function(w, i) {
             var v = load[b.id][i];
             var txt = (Math.round(v * 100) / 100).toString();
+            /* п.2: >=3 светло-красный, <2 светло-зелёный, иначе светло-жёлтый */
             var lvl = 0;
-            if (v > 0 && v <= 1) lvl = 1;
-            else if (v <= 2) lvl = 2;
-            else if (v <= 3) lvl = 3;
-            else if (v <= 4) lvl = 4;
-            else if (v > 4) lvl = 5;
+            if (v > 0) {
+                if (v >= 3) lvl = 3;
+                else if (v < 2) lvl = 1;
+                else lvl = 2;
+            }
             html += '<div class="gg-bank-cell lvl' + lvl + '" style="left:' + (i * WEEK_W + 2) + 'px;width:' + (WEEK_W - 4) + 'px" title="' + esc(b.name) + ' · неделя ' + fmtD(w.mon) + '–' + fmtD(w.sun) + ' · нагрузка ' + txt + '">' + (v > 0 ? txt : '') + '</div>';
         });
         html +=   '</div>';
@@ -1185,6 +1195,31 @@ document.getElementById('fTeam').addEventListener('change', load);
 document.getElementById('fStatus').addEventListener('change', load);
 document.getElementById('fView').addEventListener('change', load);
 document.getElementById('fType').addEventListener('change', load);
+
+/* п.1: редактирование задачи ПРЯМО из плана проверок, без ухода в раздел «Задачи» */
+document.addEventListener('click', function(ev) {
+    var btn = ev.target.closest ? ev.target.closest('.gg-edit') : null;
+    if (!btn) return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    var tid = btn.getAttribute('data-edit-tid');
+    if (!tid) return;
+    var opener = window.__trkOpenTaskModal;
+    if (typeof opener !== 'function') {
+        if (window.notify) window.notify('Редактирование недоступно', 'error');
+        return;
+    }
+    var t = null;
+    var d = window.__ggLastData;
+    if (d && Array.isArray(d.tasks)) {
+        t = d.tasks.find(function(x) { return String(x.id) === String(tid); });
+    }
+    if (!t && window.__trkState && Array.isArray(window.__trkState.tasks)) {
+        t = window.__trkState.tasks.find(function(x) { return String(x.id) === String(tid); });
+    }
+    if (!t) { if (window.notify) window.notify('Проверка не найдена: ' + tid, 'error'); return; }
+    try { opener(t); } catch (er) { console.error('[gg-edit]', er); }
+});
 msInit();
 initDates();
 loadMeta();
