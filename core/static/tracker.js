@@ -3141,6 +3141,20 @@ function applyTaskKindUI(kind) {
     document.querySelectorAll('#taskModal .tk-other-only').forEach(function(el) {
         el.style.display = isOther ? '' : 'none';
     });
+    /* Straховка от кеша/рассинхрона разметки: для 'other' принудительно
+       прячем и обнуляем поля, которых у этого вида задач нет -
+       срочность, тип задачи, карман. */
+    var hideById = ['task_is_urgent', 'task_type', 'task_pocket'];
+    hideById.forEach(function(id) {
+        var el = document.getElementById(id);
+        if (!el) return;
+        var wrap = el.closest('.form-row') || el.closest('.task-urgent-row') || el.closest('.form-group');
+        if (wrap) wrap.style.display = isOther ? 'none' : '';
+        if (isOther) {
+            if (el.type === 'checkbox') el.checked = false;
+            else el.value = '';
+        }
+    });
 }
 function openTaskModal(task, forceKind) {
     task = task || null;
