@@ -1020,7 +1020,7 @@ body.login-body {
 @keyframes glSpin { to { transform: rotate(360deg); } }
 
 /* ============ NOTIFICATIONS ============ */
-.tracker-notification { position: fixed; top: 20px; right: 20px; z-index: 2000; padding: 12px 20px; background: rgba(46,204,113,0.95); color: #fff; border-radius: 10px; box-shadow: 0 4px 20px rgba(0,0,0,0.3); max-width: 480px; font-size: 0.9rem; opacity: 0; transform: translateY(-10px); transition: opacity 0.25s, transform 0.25s; pointer-events: none; word-break: break-word; }
+.tracker-notification { position: fixed; top: 20px; right: 20px; z-index: 10001; padding: 12px 20px; background: rgba(46,204,113,0.95); color: #fff; border-radius: 10px; box-shadow: 0 4px 20px rgba(0,0,0,0.3); max-width: 480px; font-size: 0.9rem; opacity: 0; transform: translateY(-10px); transition: opacity 0.25s, transform 0.25s; pointer-events: none; word-break: break-word; }
 .tracker-notification.show { opacity: 1; transform: translateY(0); }
 .tracker-notification.error { background: rgba(231,76,60,0.95); }
 

@@ -1637,21 +1637,35 @@ def create_app():
         # Банк-руководитель обязателен и должен быть среди банков-участников.
         # Сотрудник-руководитель опционален; если задан — должен работать
         # в банке-руководителе.
-        if not dep_ids:
-            return jsonify({'success': False,
-                            'error': 'Нужно выбрать минимум один банк-участник'}), 400
-        if not lead_department:
-            return jsonify({'success': False,
-                            'error': 'Укажите банк-руководитель проверки'}), 400
-        if lead_department not in dep_ids:
-            return jsonify({'success': False,
-                            'error': 'Банк-руководитель должен быть среди банков-участников'}), 400
-        if lead_employee:
-            _emp_by_id = {e['id']: e for e in data['employees']}
-            _le = _emp_by_id.get(lead_employee)
-            if not _le or _le.get('department_id') != lead_department:
-                # Сотрудник не из банка-руководителя — не критично, просто сбрасываем
-                lead_employee = ''
+        if task_kind == 'other':
+            # Задача «Другое»: нет банка-руководителя и этапов.
+            # Обязателен коэффициент нагрузки (> 0), руководитель сбрасывается.
+            try:
+                _lc = float(load_coef)
+            except (TypeError, ValueError):
+                _lc = 0.0
+            if _lc <= 0:
+                return jsonify({'success': False,
+                                'error': 'Укажите коэффициент нагрузки (число больше нуля)'}), 400
+            load_coef = _lc
+            lead_department = ''
+            lead_employee = ''
+        else:
+            if not dep_ids:
+                return jsonify({'success': False,
+                                'error': 'Нужно выбрать минимум один банк-участник'}), 400
+            if not lead_department:
+                return jsonify({'success': False,
+                                'error': 'Укажите банк-руководитель проверки'}), 400
+            if lead_department not in dep_ids:
+                return jsonify({'success': False,
+                                'error': 'Банк-руководитель должен быть среди банков-участников'}), 400
+            if lead_employee:
+                _emp_by_id = {e['id']: e for e in data['employees']}
+                _le = _emp_by_id.get(lead_employee)
+                if not _le or _le.get('department_id') != lead_department:
+                    # Сотрудник не из банка-руководителя — не критично, просто сбрасываем
+                    lead_employee = ''
 
         # PATCH 19 — проверка дубликатов имён задач (только при создании)
         if not task_id:
