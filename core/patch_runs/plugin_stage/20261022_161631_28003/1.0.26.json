@@ -1,0 +1,40 @@
+{
+  "id": "1.0.26",
+  "target_version": "1.0.26",
+  "description": "Календарь: (1) not_started у не-админа — только свои задачи, dayViewEmployeeId инициализируется; (2) гарантированно убрать фильтр по deadline в api_calendar (страховка поверх 1.0.24); (3) поднять лимит not_started до 200.",
+  "requires": ["1.0.24"],
+  "operations": [
+    {
+      "type": "regex",
+      "path": "app.py",
+      "idempotent": true,
+      "optional": true,
+      "pattern": "\\n([ \\t]+)if _dl and dk > _dl:\\n\\1    continue\\n",
+      "content": "\n"
+    },
+    {
+      "type": "replace",
+      "path": "app.py",
+      "idempotent": true,
+      "optional": true,
+      "find": "            day['not_started'] = day['not_started'][:30]",
+      "content": "            day['not_started'] = day['not_started'][:200]"
+    },
+    {
+      "type": "replace",
+      "path": "static/tracker.js",
+      "idempotent": true,
+      "optional": true,
+      "find": "    function render() {\n        var modal = document.getElementById('dayModal');\n        if (!modal || !modal.classList.contains('active')) return;\n        var st = window.__trkState;\n        var day = currentDay();\n        // PATCH 1.0.24: в режиме сотрудника — только его not_started, не скрывать блок\n        if (day && st && st.dayViewMode === 'employee' && st.dayViewEmployeeId) {\n            var _eid = st.dayViewEmployeeId;\n            day = Object.assign({}, day, {\n                not_started: (day.not_started || []).filter(function(x){ return x.employee_id === _eid; })\n            });\n        }\n",
+      "content": "    function render() {\n        var modal = document.getElementById('dayModal');\n        if (!modal || !modal.classList.contains('active')) return;\n        var st = window.__trkState || {};\n        var day = currentDay();\n        // PATCH 1.0.26: не-админ видит только свои задачи в not_started\n        if (day) {\n            var _perms = window.REESTR_PERMS || {};\n            var _meId = (st.currentUser && st.currentUser.employee_id) || '';\n            var _isAdmin = !!(_perms['action.log.edit.any'] || _perms['block.calendar.other_employees']);\n            var _ns = (day.not_started || []).slice();\n            if (!_isAdmin) {\n                if (!_meId) {\n                    _ns = [];\n                } else if (st.dayViewMode === 'employee' && st.dayViewEmployeeId) {\n                    _ns = _ns.filter(function(x){ return x.employee_id === st.dayViewEmployeeId; });\n                } else {\n                    _ns = _ns.filter(function(x){ return x.employee_id === _meId; });\n                }\n            }\n            day = Object.assign({}, day, { not_started: _ns });\n        }\n"
+    },
+    {
+      "type": "replace",
+      "path": "static/tracker.js",
+      "idempotent": true,
+      "optional": true,
+      "find": "document.addEventListener('click', function(e){\n        if (!e.target || !e.target.closest) return;\n        var b = e.target.closest('#dayViewMode button');\n        if (!b) return;\n        var mode = b.getAttribute('data-mode');\n        if (mode !== 'task' && mode !== 'employee') return;\n        var st = window.__trkState;\n        if (!st) return;\n        st.dayViewMode = mode;\n        try { localStorage.setItem('tracker_day_view', mode); } catch (er) {}",
+      "content": "document.addEventListener('click', function(e){\n        if (!e.target || !e.target.closest) return;\n        var b = e.target.closest('#dayViewMode button');\n        if (!b) return;\n        var mode = b.getAttribute('data-mode');\n        if (mode !== 'task' && mode !== 'employee') return;\n        var st = window.__trkState;\n        if (!st) return;\n        st.dayViewMode = mode;\n        // PATCH 1.0.26: при переключении в «Сотрудники» — запомнить, чей день\n        if (mode === 'employee') {\n            st.dayViewEmployeeId = (st.currentUser && st.currentUser.employee_id) || '';\n        } else {\n            st.dayViewEmployeeId = '';\n        }\n        try { localStorage.setItem('tracker_day_view', mode); } catch (er) {}"
+    }
+  ]
+}

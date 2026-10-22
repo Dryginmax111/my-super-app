@@ -81,6 +81,13 @@
                 <span id="calExpandIcon">⤢</span>
                 <span id="calExpandLabel">Разворот дня: вкл</span>
             </button>
+            <div class="export-menu-wrap" style="position:relative;display:inline-block;">
+                <button class="dict-add-btn" id="exportMenuBtn" style="background:linear-gradient(135deg,#27ae60,#229954);">📥 Экспорт ▾</button>
+                <div id="exportMenuDrop" style="display:none;position:absolute;top:calc(100% + 4px);left:0;z-index:9999;background:#141414;border:1px solid rgba(245,215,110,0.22);border-radius:10px;box-shadow:0 8px 32px rgba(0,0,0,0.55);min-width:260px;padding:6px;">
+                    <div class="export-menu-item" data-form="calendar" style="padding:9px 12px;border-radius:8px;cursor:pointer;color:#e8e8e8;font-size:0.9rem;">📅 Календарь (полный)</div>
+                    <div class="export-menu-item" data-form="debtors" style="padding:9px 12px;border-radius:8px;cursor:pointer;color:#e8e8e8;font-size:0.9rem;">⚠️ Кто не заполнил отчёт (сегодня)</div>
+                </div>
+            </div>
             {% if P.get('block.calendar.dept_filter') %}
             <label class="cal-emp-filter" style="margin-left:auto;" title="Отдел">
                 <span>🏢</span><select id="calDeptFilter"><option value="">Отделы</option></select>
@@ -369,8 +376,8 @@
                style="margin-top:4px;padding:6px 10px;border:1px solid var(--trk-input-border);border-radius:8px;background:var(--trk-input-bg);color:var(--trk-text);font-size:0.82rem;outline:none;font-family:inherit;">
     </div>
     <div class="modal-actions">
-        <button class="btn btn-secondary" data-close="employeeModal">Отмена</button>
         <button class="btn btn-primary" id="saveEmployeeBtn">💾 Сохранить</button>
+        <button class="btn btn-secondary" data-close="employeeModal">Закрыть</button>
     </div>
 </div></div>
 <div class="modal" id="departmentModal"><div class="modal-content">
@@ -382,8 +389,8 @@
         <select id="dep_head"><option value="">— не указан —</option></select>
     </div>
     <div class="modal-actions">
-        <button class="btn btn-secondary" data-close="departmentModal">Отмена</button>
         <button class="btn btn-primary" id="saveDepartmentBtn">💾 Сохранить</button>
+        <button class="btn btn-secondary" data-close="departmentModal">Закрыть</button>
     </div>
 </div></div>
 <div class="modal" id="teamModal"><div class="modal-content">
@@ -397,8 +404,8 @@
         <div class="assignees-hint" id="teamMembersHint"></div>
     </div>
     <div class="modal-actions">
-        <button class="btn btn-secondary" data-close="teamModal">Отмена</button>
         <button class="btn btn-primary" id="saveTeamBtn">💾 Сохранить</button>
+        <button class="btn btn-secondary" data-close="teamModal">Закрыть</button>
     </div>
 </div></div>
 <div class="modal" id="taskModal"><div class="modal-content">
@@ -505,8 +512,8 @@
         <div class="assignees-hint" id="taskLeadHint">Банк — из выбранных участников. Сотрудник — из этого банка.</div>
     </div>
     <div class="modal-actions">
-        <button class="btn btn-secondary" data-close="taskModal">Отмена</button>
         <button class="btn btn-primary" id="saveTaskBtn">💾 Сохранить</button>
+        <button class="btn btn-secondary" data-close="taskModal">Закрыть</button>
     </div>
 </div></div>
 <div class="modal" id="emojiModal"><div class="modal-content">
@@ -616,8 +623,8 @@
         <div class="log-multifields-ro" id="logMultiFieldsRO" style="display:none;" aria-hidden="true"></div>
     </div>
     <div class="modal-actions">
-        <button class="btn btn-secondary" data-close="logModal">Отмена</button>
         <button class="btn btn-primary" id="saveLogBtn">💾 Сохранить</button>
+        <button class="btn btn-secondary" data-close="logModal">Закрыть</button>
     </div>
 </div></div>
 <div class="modal" id="empCardModal"><div class="modal-content wide">
@@ -639,8 +646,8 @@
         <select id="copyDayEmpSelect"></select>
     </div>
     <div class="modal-actions">
-        <button class="btn btn-secondary" data-close="copyDayEmpModal">Отмена</button>
         <button class="btn btn-primary" id="copyDayEmpConfirm">📎 Скопировать</button>
+        <button class="btn btn-secondary" data-close="copyDayEmpModal">Закрыть</button>
     </div>
 </div></div>
 <div class="modal" id="absenceInfoModal"><div class="modal-content">

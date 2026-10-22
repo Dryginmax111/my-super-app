@@ -9708,3 +9708,31 @@ body.trk-theme-light .day-assigned-block .dab-tile .dab-add:hover:not(:disabled)
 }
 .task-stage-row.task-stage-conflict .task-stage-name { color: #e74c3c; font-weight: 600; }
 .task-stage-row.task-stage-conflict input[type="date"] { border-color: #e74c3c; }
+
+
+/* ============================================================
+   PATCH 1.0.25 — выравнивание кнопок в модалках: secondary
+   (Закрыть/Отмена) всегда в правом нижнем углу
+   ============================================================ */
+.modal-actions {
+    flex-direction: row;
+    justify-content: flex-end;
+}
+.modal-actions > .btn-primary,
+.modal-actions > .btn-danger {
+    order: 1;
+}
+.modal-actions > .btn-secondary,
+.modal-actions > .btn:not(.btn-primary):not(.btn-danger) {
+    order: 2;
+}
+
+/* Бейдж «Сбросить всем» для админа */
+.trk-bell-markall--global {
+    margin-left: 8px;
+    color: var(--trk-err, #e74c3c) !important;
+    border-color: rgba(231,76,60,0.35) !important;
+}
+.trk-bell-markall--global:hover {
+    background: rgba(231,76,60,0.10) !important;
+}

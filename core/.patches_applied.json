@@ -4,76 +4,14 @@
     "description": "Пакет по аудиту: убран дубликат registry в app.py; _verify_patches пропускает патчи со skip_reason; авто-очистка patch_runs и patch_backups; отключена кнопка #tskCompactToggle (v1.0.12); обрезка changes в журнале (10 последних); убраны debug-print из _merge_log_data_into_task; sliding session lifetime.",
     "target_version": "1.0.1",
     "operations_count": 11,
-    "changes": [
-      {
-        "path": "static\\tracker.js",
-        "backup": "patch_backups\\static\\tracker.js.bak-20261019_082500_74594",
-        "created": false
-      },
-      {
-        "path": "app.py",
-        "backup": "patch_backups\\app.py.bak-20261019_082500_76365",
-        "created": false
-      },
-      {
-        "path": "app.py",
-        "backup": "patch_backups\\app.py.bak-20261019_082500_77383",
-        "created": false
-      },
-      {
-        "path": "app.py",
-        "backup": "patch_backups\\app.py.bak-20261019_082500_78254",
-        "created": false
-      },
-      {
-        "path": "app.py",
-        "backup": "patch_backups\\app.py.bak-20261019_082500_79379",
-        "created": false
-      },
-      {
-        "path": "app.py",
-        "backup": "patch_backups\\app.py.bak-20261019_082500_80355",
-        "created": false
-      },
-      {
-        "path": "app.py",
-        "backup": "patch_backups\\app.py.bak-20261019_082500_81222",
-        "created": false
-      },
-      {
-        "path": "plugins\\updater.py",
-        "backup": "patch_backups\\plugins\\updater.py.bak-20261019_082500_81925",
-        "created": false
-      },
-      {
-        "path": "plugins\\updater.py",
-        "backup": "patch_backups\\plugins\\updater.py.bak-20261019_082500_82766",
-        "created": false
-      },
-      {
-        "path": "patcher.py",
-        "backup": "patch_backups\\patcher.py.bak-20261019_082500_83531",
-        "created": false
-      }
-    ]
+    "changes": []
   },
   "1.0.2": {
     "applied_at": "2026-10-19 08:28:43",
     "description": "B3: единый перехватчик fetch на /api/tracker/log/save. Порядок: собрать multi-поля из DOM → overflow → уже-есть → отправить → auto-assign → close all modals. Старые перехватчики (PATCH07, v1.0.4, v1.0.10, v1.0.19, v1.0.24, v1.0.32) заглушены guard-флагами в prepend.",
     "target_version": "1.0.2",
     "operations_count": 2,
-    "changes": [
-      {
-        "path": "static\\tracker.js",
-        "backup": "patch_backups\\static\\tracker.js.bak-20261019_082843_25743",
-        "created": false
-      },
-      {
-        "path": "static\\tracker.js",
-        "backup": "patch_backups\\static\\tracker.js.bak-20261019_082843_28121",
-        "created": false
-      }
-    ]
+    "changes": []
   },
   "1.0.3": {
     "applied_at": "2026-10-19 08:32:48",
@@ -102,6 +40,275 @@
       {
         "path": "app.py",
         "backup": "patch_backups\\app.py.bak-20261019_083957_17863",
+        "created": false
+      }
+    ]
+  },
+  "1.0.10": {
+    "applied_at": "2026-10-22 16:16:31",
+    "description": "Экспорт календаря в Excel через db.load_all: таблица сотрудники×дни, цвета статусов, иконки отпусков, итоги. Замена откатанных 1.0.8/1.0.9",
+    "target_version": "1.0.10",
+    "operations_count": 3,
+    "changes": [
+      {
+        "path": "static\\tracker.js",
+        "backup": "patch_backups\\static\\tracker.js.bak-20261022_161631_88942",
+        "created": false
+      },
+      {
+        "path": "templates\\tracker.html",
+        "backup": "patch_backups\\templates\\tracker.html.bak-20261022_161631_90421",
+        "created": false
+      },
+      {
+        "path": "app.py",
+        "backup": "patch_backups\\app.py.bak-20261022_161631_91205",
+        "created": false
+      }
+    ]
+  },
+  "1.0.12": {
+    "applied_at": "2026-10-22 16:16:32",
+    "description": "Дропдаун-экспорт: замена кнопки на меню + форма 'кто не заполнил отчёт'. Ставится поверх 1.0.10, не дублирует роут календаря",
+    "target_version": "1.0.12",
+    "operations_count": 3,
+    "changes": [
+      {
+        "path": "templates\\tracker.html",
+        "backup": "patch_backups\\templates\\tracker.html.bak-20261022_161631_95695",
+        "created": false
+      },
+      {
+        "path": "static\\tracker.js",
+        "backup": "patch_backups\\static\\tracker.js.bak-20261022_161632_19861",
+        "created": false
+      },
+      {
+        "path": "app.py",
+        "backup": "patch_backups\\app.py.bak-20261022_161632_25665",
+        "created": false
+      }
+    ]
+  },
+  "1.0.21": {
+    "applied_at": "2026-10-22 16:16:32",
+    "description": "ТЕМА уведомления = 1.0.16 (вертикаль, create/done, 🆕/✅). Все ops optional.",
+    "target_version": "1.0.21",
+    "operations_count": 5,
+    "changes": [
+      {
+        "path": "app.py",
+        "backup": "patch_backups\\app.py.bak-20261022_161632_31591",
+        "created": false
+      },
+      {
+        "path": "app.py",
+        "backup": "patch_backups\\app.py.bak-20261022_161632_35945",
+        "created": false
+      },
+      {
+        "path": "app.py",
+        "backup": "patch_backups\\app.py.bak-20261022_161632_41174",
+        "created": false
+      },
+      {
+        "path": "static\\tracker.js",
+        "backup": "patch_backups\\static\\tracker.js.bak-20261022_161632_63436",
+        "created": false
+      }
+    ]
+  },
+  "1.0.22": {
+    "applied_at": "2026-10-22 16:16:32",
+    "description": "ТЕМА календарь+импорт = 1.0.17+1.0.18 (рефреш, not_started, user 123456).",
+    "target_version": "1.0.22",
+    "operations_count": 3,
+    "changes": [
+      {
+        "path": "static\\tracker.js",
+        "backup": "patch_backups\\static\\tracker.js.bak-20261022_161632_88696",
+        "created": false
+      },
+      {
+        "path": "app.py",
+        "backup": "patch_backups\\app.py.bak-20261022_161632_93225",
+        "created": false
+      },
+      {
+        "path": "plugins\\my_profile.py",
+        "backup": "patch_backups\\plugins\\my_profile.py.bak-20261022_161632_94094",
+        "created": false
+      }
+    ]
+  },
+  "1.0.23": {
+    "applied_at": "2026-10-22 16:16:34",
+    "description": "ТЕМА UI+лента = 1.0.19+1.0.20 (история работы, Закрыть, закрытие модалок). Без login/db.",
+    "target_version": "1.0.23",
+    "operations_count": 15,
+    "changes": [
+      {
+        "path": "app.py",
+        "backup": "patch_backups\\app.py.bak-20261022_161632_98874",
+        "created": false
+      },
+      {
+        "path": "static\\tracker.js",
+        "backup": "patch_backups\\static\\tracker.js.bak-20261022_161633_31569",
+        "created": false
+      },
+      {
+        "path": "static\\tracker.js",
+        "backup": "patch_backups\\static\\tracker.js.bak-20261022_161633_57987",
+        "created": false
+      },
+      {
+        "path": "static\\tracker.js",
+        "backup": "patch_backups\\static\\tracker.js.bak-20261022_161633_80799",
+        "created": false
+      },
+      {
+        "path": "app.py",
+        "backup": "patch_backups\\app.py.bak-20261022_161633_82641",
+        "created": false
+      },
+      {
+        "path": "templates\\tracker.html",
+        "backup": "patch_backups\\templates\\tracker.html.bak-20261022_161633_90246",
+        "created": false
+      },
+      {
+        "path": "templates\\tracker.html",
+        "backup": "patch_backups\\templates\\tracker.html.bak-20261022_161633_94809",
+        "created": false
+      },
+      {
+        "path": "templates\\tracker.html",
+        "backup": "patch_backups\\templates\\tracker.html.bak-20261022_161633_98236",
+        "created": false
+      },
+      {
+        "path": "templates\\tracker.html",
+        "backup": "patch_backups\\templates\\tracker.html.bak-20261022_161634_01795",
+        "created": false
+      },
+      {
+        "path": "templates\\tracker.html",
+        "backup": "patch_backups\\templates\\tracker.html.bak-20261022_161634_06451",
+        "created": false
+      },
+      {
+        "path": "templates\\tracker.html",
+        "backup": "patch_backups\\templates\\tracker.html.bak-20261022_161634_10737",
+        "created": false
+      },
+      {
+        "path": "static\\tracker.js",
+        "backup": "patch_backups\\static\\tracker.js.bak-20261022_161634_32450",
+        "created": false
+      },
+      {
+        "path": "static\\tracker.js",
+        "backup": "patch_backups\\static\\tracker.js.bak-20261022_161634_56248",
+        "created": false
+      }
+    ]
+  },
+  "1.0.24": {
+    "applied_at": "2026-10-22 16:16:34",
+    "description": "Календарь «🩶 Назначено, не начато»: не прятать задачи после deadline; лимит 200; в режиме дня по сотруднику блок не скрывается. Экспорт ▾ — только 1.0.12 (1.0.14 не нужен).",
+    "target_version": "1.0.24",
+    "operations_count": 4,
+    "changes": [
+      {
+        "path": "app.py",
+        "backup": "patch_backups\\app.py.bak-20261022_161634_57684",
+        "created": false
+      },
+      {
+        "path": "app.py",
+        "backup": "patch_backups\\app.py.bak-20261022_161634_61107",
+        "created": false
+      },
+      {
+        "path": "static\\tracker.js",
+        "backup": "patch_backups\\static\\tracker.js.bak-20261022_161634_83545",
+        "created": false
+      }
+    ]
+  },
+  "1.0.25": {
+    "applied_at": "2026-10-22 16:16:35",
+    "description": "UI-полировка: (1) убрать дублирующий дропдаун Экспорт в календаре; (2) кнопки 'Закрыть' — единое имя и в правом нижнем углу во всех modal-actions; (3) уведомления: /api/notifications отдаёт только непрочитанные, добавлен admin-роут read_all для глобального сброса.",
+    "target_version": "1.0.25",
+    "operations_count": 21,
+    "changes": [
+      {
+        "path": "templates\\tracker.html",
+        "backup": "patch_backups\\templates\\tracker.html.bak-20261022_161634_89131",
+        "created": false
+      },
+      {
+        "path": "templates\\tracker.html",
+        "backup": "patch_backups\\templates\\tracker.html.bak-20261022_161634_93002",
+        "created": false
+      },
+      {
+        "path": "templates\\tracker.html",
+        "backup": "patch_backups\\templates\\tracker.html.bak-20261022_161634_96050",
+        "created": false
+      },
+      {
+        "path": "templates\\tracker.html",
+        "backup": "patch_backups\\templates\\tracker.html.bak-20261022_161634_99103",
+        "created": false
+      },
+      {
+        "path": "templates\\tracker.html",
+        "backup": "patch_backups\\templates\\tracker.html.bak-20261022_161635_02080",
+        "created": false
+      },
+      {
+        "path": "templates\\tracker.html",
+        "backup": "patch_backups\\templates\\tracker.html.bak-20261022_161635_05086",
+        "created": false
+      },
+      {
+        "path": "app.py",
+        "backup": "patch_backups\\app.py.bak-20261022_161635_11134",
+        "created": false
+      },
+      {
+        "path": "app.py",
+        "backup": "patch_backups\\app.py.bak-20261022_161635_14356",
+        "created": false
+      },
+      {
+        "path": "static\\tracker.js",
+        "backup": "patch_backups\\static\\tracker.js.bak-20261022_161635_36356",
+        "created": false
+      },
+      {
+        "path": "static\\tracker.js",
+        "backup": "patch_backups\\static\\tracker.js.bak-20261022_161635_59543",
+        "created": false
+      },
+      {
+        "path": "static\\app.css",
+        "backup": "patch_backups\\static\\app.css.bak-20261022_161635_61065",
+        "created": false
+      }
+    ]
+  },
+  "1.0.26": {
+    "applied_at": "2026-10-22 16:16:36",
+    "description": "Календарь: (1) not_started у не-админа — только свои задачи, dayViewEmployeeId инициализируется; (2) гарантированно убрать фильтр по deadline в api_calendar (страховка поверх 1.0.24); (3) поднять лимит not_started до 200.",
+    "target_version": "1.0.26",
+    "operations_count": 4,
+    "changes": [
+      {
+        "path": "static\\tracker.js",
+        "backup": "patch_backups\\static\\tracker.js.bak-20261022_161635_84838",
         "created": false
       }
     ]

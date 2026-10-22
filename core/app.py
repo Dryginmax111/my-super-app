@@ -388,32 +388,86 @@ def _team_filter_emp_ids(data, team_id):
     return s
 
 
-def _find_notification_recipients(db, employee_id, exclude_user_id=None):
-    """Кому слать уведомление о действиях сотрудника:
-    все админы + руководитель отдела + менеджеры команд, где состоит сотрудник."""
-    recipients = set()
+def _actor_is_manager_of(db, actor_user, employee_id):
+    """True если actor — manager команды сотрудника, head его отдела или admin."""
+    if not actor_user or not employee_id:
+        return False
+    if (actor_user.get('role') or '') == 'admin':
+        return True
+    actor_eid = (actor_user.get('employee_id') or '').strip()
+    if not actor_eid:
+        return False
     try:
-        for u in db.query("SELECT id FROM users WHERE role='admin' AND is_active=1"):
-            recipients.add(u['id'])
         emp = db.query_one('SELECT department_id FROM employees WHERE id=?', (employee_id,))
         dept_id = (emp or {}).get('department_id') or ''
         if dept_id:
             dept = db.query_one('SELECT head_employee_id FROM departments WHERE id=?', (dept_id,))
-            head_eid = (dept or {}).get('head_employee_id') or ''
-            if head_eid:
-                hu = db.query_one('SELECT id FROM users WHERE employee_id=? AND is_active=1', (head_eid,))
-                if hu: recipients.add(hu['id'])
+            if ((dept or {}).get('head_employee_id') or '') == actor_eid:
+                return True
         for r in db.query('SELECT id, manager_id FROM teams'):
             mgr = (r.get('manager_id') or '').strip()
-            if not mgr: continue
-            if mgr == employee_id:
-                mu = db.query_one('SELECT id FROM users WHERE employee_id=? AND is_active=1', (mgr,))
-                if mu: recipients.add(mu['id'])
+            if mgr != actor_eid:
                 continue
-            m = db.query_one('SELECT 1 FROM team_members WHERE team_id=? AND employee_id=? LIMIT 1', (r['id'], employee_id))
-            if not m: continue
+            if mgr == employee_id:
+                return True
+            m = db.query_one(
+                'SELECT 1 FROM team_members WHERE team_id=? AND employee_id=? LIMIT 1',
+                (r['id'], employee_id),
+            )
+            if m:
+                return True
+    except Exception as e:
+        print(f'[notify] actor_is_manager failed: {e}')
+    return False
+
+
+def _find_notification_recipients(db, employee_id, exclude_user_id=None, actor_user=None, event_kind='task_done'):
+    """Вертикаль вверх: manager команды + head отдела.
+    Admin — только fallback, если вертикали нет."""
+    recipients = set()
+    vertical = set()
+    try:
+        actor_eid = ((actor_user or {}).get('employee_id') or '').strip()
+        actor_is_admin = ((actor_user or {}).get('role') or '') == 'admin'
+        emp = db.query_one('SELECT department_id FROM employees WHERE id=?', (employee_id,))
+        dept_id = (emp or {}).get('department_id') or ''
+        head_eid = ''
+        if dept_id:
+            dept = db.query_one('SELECT head_employee_id FROM departments WHERE id=?', (dept_id,))
+            head_eid = (dept or {}).get('head_employee_id') or ''
+            if head_eid and head_eid != actor_eid:
+                hu = db.query_one('SELECT id FROM users WHERE employee_id=? AND is_active=1', (head_eid,))
+                if hu:
+                    vertical.add(hu['id'])
+        for r in db.query('SELECT id, manager_id FROM teams'):
+            mgr = (r.get('manager_id') or '').strip()
+            if not mgr or mgr == actor_eid:
+                continue
+            is_member = False
+            if mgr == employee_id:
+                is_member = True
+            else:
+                m = db.query_one(
+                    'SELECT 1 FROM team_members WHERE team_id=? AND employee_id=? LIMIT 1',
+                    (r['id'], employee_id),
+                )
+                is_member = bool(m)
+            if not is_member:
+                continue
             mu = db.query_one('SELECT id FROM users WHERE employee_id=? AND is_active=1', (mgr,))
-            if mu: recipients.add(mu['id'])
+            if mu:
+                vertical.add(mu['id'])
+        actor_is_boss = _actor_is_manager_of(db, actor_user, employee_id) if actor_user else False
+        if actor_is_boss:
+            recipients |= vertical
+            if actor_is_admin or (actor_eid and actor_eid == head_eid):
+                for u in db.query("SELECT id FROM users WHERE role='admin' AND is_active=1"):
+                    recipients.add(u['id'])
+        else:
+            recipients |= vertical
+            if not recipients:
+                for u in db.query("SELECT id FROM users WHERE role='admin' AND is_active=1"):
+                    recipients.add(u['id'])
     except Exception as e:
         print(f'[notify] recipients failed: {e}')
     if exclude_user_id is not None:
@@ -421,28 +475,103 @@ def _find_notification_recipients(db, employee_id, exclude_user_id=None):
     return list(recipients)
 
 
+def _notif_dedup(db, kind, task_id, employee_id, hours=24):
+    try:
+        row = db.query_one(
+            'SELECT id FROM notifications WHERE kind=? AND task_id=? AND employee_id=? '
+            "AND ts >= datetime('now', ?) ORDER BY id DESC LIMIT 1",
+            (kind, task_id or '', employee_id or '', f'-{int(hours)} hours'),
+        )
+        return bool(row)
+    except Exception:
+        return False
+
+
 def _notify_task_done(db, task_id, employee_id, from_user):
     try:
         from_uid = (from_user or {}).get('id')
-        recipients = _find_notification_recipients(db, employee_id, exclude_user_id=from_uid)
+        is_boss = _actor_is_manager_of(db, from_user, employee_id)
+        recipients = _find_notification_recipients(
+            db, employee_id, exclude_user_id=from_uid,
+            actor_user=from_user, event_kind='task_done',
+        )
         if not recipients:
+            return
+        if _notif_dedup(db, 'task_done', task_id, employee_id):
             return
         emp = db.query_one('SELECT name FROM employees WHERE id=?', (employee_id,))
         emp_name = (emp or {}).get('name', employee_id)
         t = db.query_one('SELECT name, icon FROM tasks WHERE id=?', (task_id,))
         task_name = (t or {}).get('name', task_id)
         task_icon = (t or {}).get('icon', '📋')
-        msg = f'{task_icon} {emp_name} закрыл задачу: {task_name}'
+        if is_boss:
+            msg = f'{task_icon} {emp_name}: задача закрыта руководителем — {task_name}'
+        else:
+            msg = f'{task_icon} {emp_name} закрыл задачу: {task_name}'
+        now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        init_status = 'info' if is_boss else 'new'
+        with db.transaction() as tx:
+            for uid in recipients:
+                tx.exec(
+                    'INSERT INTO notifications (ts, to_user_id, from_user_id, from_username, kind, task_id, employee_id, message, status) '
+                    'VALUES (?,?,?,?,?,?,?,?,?)',
+                    (now, uid, from_uid, (from_user or {}).get('username', ''),
+                     'task_done', task_id, employee_id, msg, init_status),
+                )
+    except Exception as e:
+        print(f'[notify] task_done failed: {e}')
+
+
+def _notify_task_created(db, task_id, from_user):
+    """Уведомление по вертикали о создании задачи (без confirm)."""
+    try:
+        from_uid = (from_user or {}).get('id')
+        actor_eid = (from_user or {}).get('employee_id') or ''
+        t = db.query_one('SELECT name, icon FROM tasks WHERE id=?', (task_id,))
+        if not t:
+            return
+        assignees = []
+        try:
+            for r in db.query('SELECT employee_id FROM task_assignees WHERE task_id=?', (task_id,)):
+                if r.get('employee_id'):
+                    assignees.append(r['employee_id'])
+        except Exception:
+            pass
+        anchor_eid = actor_eid or (assignees[0] if assignees else '')
+        if not anchor_eid:
+            recipients = set()
+            for u in db.query("SELECT id FROM users WHERE role='admin' AND is_active=1"):
+                recipients.add(u['id'])
+            if from_uid is not None:
+                recipients.discard(from_uid)
+        else:
+            recipients = set(_find_notification_recipients(
+                db, anchor_eid, exclude_user_id=from_uid,
+                actor_user=from_user, event_kind='task_created',
+            ))
+        if not recipients:
+            return
+        if _notif_dedup(db, 'task_created', task_id, anchor_eid or ''):
+            return
+        who = (from_user or {}).get('display_name') or (from_user or {}).get('username') or 'пользователь'
+        if actor_eid:
+            emp = db.query_one('SELECT name FROM employees WHERE id=?', (actor_eid,))
+            if emp and emp.get('name'):
+                who = emp['name']
+        task_name = t.get('name', task_id)
+        task_icon = t.get('icon', '📋')
+        msg = f'{task_icon} {who} создал задачу: {task_name}'
         now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         with db.transaction() as tx:
             for uid in recipients:
                 tx.exec(
-                    'INSERT INTO notifications (ts, to_user_id, from_user_id, from_username, kind, task_id, employee_id, message) '
-                    'VALUES (?,?,?,?,?,?,?,?)',
-                    (now, uid, from_uid, (from_user or {}).get('username', ''), 'task_done', task_id, employee_id, msg),
+                    'INSERT INTO notifications (ts, to_user_id, from_user_id, from_username, kind, task_id, employee_id, message, status) '
+                    'VALUES (?,?,?,?,?,?,?,?,?)',
+                    (now, uid, from_uid, (from_user or {}).get('username', ''),
+                     'task_created', task_id, anchor_eid or '', msg, 'info'),
                 )
     except Exception as e:
-        print(f'[notify] task_done failed: {e}')
+        print(f'[notify] task_created failed: {e}')
 
 
 def _audit(db, user, kind, entity='', entity_id='', details=None):
@@ -1005,7 +1134,7 @@ def create_app():
         kody = data.get('kody') or ''
         u = db.user_get_by_name(username)
         # PATCH v2: verify_kody (кириллица)
-        if not u or not u.get('is_active') or not verify_kody(u['kody_hash'], kody):
+        if not u or not u.get('is_active') or not verify_kody((u.get('password_hash') or u.get('kody_hash') or ''), kody if 'kody' in dir() else password):
             return render_template(
                 'login.html',
                 error='Неверный логин или parol',
@@ -1608,6 +1737,12 @@ def create_app():
                                                 task_id=task_id, created=created)
         except Exception:
             pass
+        # PATCH v1.0.16: уведомление по вертикали о новой задаче
+        if created:
+            try:
+                _notify_task_created(db, task_id, u)
+            except Exception as _e:
+                print(f'[notify] task_created hook failed: {_e}')
         return jsonify({'success': True, 'id': task_id, 'created': created})
 
     @app.route('/api/tracker/task/delete', methods=['POST'])
@@ -2120,6 +2255,230 @@ def create_app():
     # ============================================================
     # API: CALENDAR
     # ============================================================
+    @app.route('/api/tracker/export/debtors')
+    @login_required
+    def api_export_debtors():
+        from datetime import date
+        from flask import send_file
+        try:
+            import openpyxl
+            from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+        except ImportError:
+            return jsonify({'success': False, 'error': 'openpyxl не установлен: pip install openpyxl'}), 500
+        d = (request.args.get('date') or '').strip() or date.today().strftime('%Y-%m-%d')
+        dept_id = request.args.get('department', '')
+        team_id = request.args.get('team', '')
+        data = db.load_all()
+        employees = list(data.get('employees', []))
+        teams = data.get('teams', [])
+        all_logs = data.get('log', [])
+        emp_team = {}
+        for t in teams:
+            for mid in (t.get('member_ids') or []):
+                emp_team.setdefault(mid, t.get('name'))
+            if t.get('manager_id'):
+                emp_team.setdefault(t['manager_id'], t.get('name'))
+        if dept_id:
+            employees = [e for e in employees if e.get('department_id') == dept_id]
+        if team_id:
+            member_ids = set()
+            for t in teams:
+                if t['id'] == team_id:
+                    member_ids.update(t.get('member_ids') or [])
+                    if t.get('manager_id'):
+                        member_ids.add(t['manager_id'])
+            employees = [e for e in employees if e['id'] in member_ids]
+        reported = set()
+        for l in all_logs:
+            if l.get('date') == d:
+                reported.add(l.get('employee_id'))
+        debtors = [e for e in employees if not e.get('fired') and e['id'] not in reported]
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = 'Не заполнили отчёт'
+        header_fill = PatternFill('solid', fgColor='C0392B')
+        header_font = Font(bold=True, color='FFFFFF')
+        thin = Side(style='thin', color='CCCCCC')
+        border = Border(left=thin, right=thin, top=thin, bottom=thin)
+        ws.merge_cells('A1:D1')
+        ws['A1'] = f'Не заполнили отчёт за {d}'
+        ws['A1'].font = Font(bold=True, size=14)
+        ws['A1'].alignment = Alignment(horizontal='center')
+        for ci, h in enumerate(['№', 'ФИО', 'Отдел', 'Команда'], start=1):
+            c = ws.cell(row=3, column=ci, value=h)
+            c.font = header_font
+            c.fill = header_fill
+            c.border = border
+            c.alignment = Alignment(horizontal='center')
+        row = 4
+        for i, e in enumerate(debtors, start=1):
+            ws.cell(row=row, column=1, value=i).border = border
+            ws.cell(row=row, column=2, value=e.get('name', '')).border = border
+            ws.cell(row=row, column=3, value=e.get('department', '')).border = border
+            ws.cell(row=row, column=4, value=emp_team.get(e['id'], '')).border = border
+            row += 1
+        total_active = len([e for e in employees if not e.get('fired')])
+        ws.cell(row=row + 1, column=2, value=f'Итого: {len(debtors)} из {total_active} не заполнили').font = Font(bold=True)
+        ws.column_dimensions['A'].width = 6
+        ws.column_dimensions['B'].width = 30
+        ws.column_dimensions['C'].width = 20
+        ws.column_dimensions['D'].width = 20
+        from io import BytesIO
+        output = BytesIO()
+        wb.save(output)
+        output.seek(0)
+        return send_file(output, mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', as_attachment=True, download_name=f'debtors_{d}.xlsx')
+
+    @app.route('/api/tracker/calendar/export')
+    @login_required
+    def api_calendar_export_excel():
+        from datetime import date
+        from calendar import monthrange
+        from flask import send_file
+        try:
+            import openpyxl
+            from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+            from openpyxl.utils import get_column_letter
+        except ImportError:
+            return jsonify({'success': False, 'error': 'openpyxl не установлен: pip install openpyxl'}), 500
+        try:
+            year = int(request.args.get('year', date.today().year))
+            month = int(request.args.get('month', date.today().month))
+        except (ValueError, TypeError):
+            year, month = date.today().year, date.today().month
+        _, days_in_month = monthrange(year, month)
+        start_date = f'{year}-{month:02d}-01'
+        end_date = f'{year}-{month:02d}-{days_in_month:02d}'
+        dept_id = request.args.get('department', '')
+        team_id = request.args.get('team', '')
+        emp_id = request.args.get('employee', '')
+        data = db.load_all(since=start_date)
+        employees = list(data.get('employees', []))
+        tasks_by_id = {t['id']: t for t in data.get('tasks', [])}
+        teams = data.get('teams', [])
+        holidays = data.get('holidays', {})
+        all_logs = data.get('log', [])
+        if dept_id:
+            employees = [e for e in employees if e.get('department_id') == dept_id]
+        if team_id:
+            member_ids = set()
+            for t in teams:
+                if t['id'] == team_id:
+                    member_ids.update(t.get('member_ids') or [])
+                    if t.get('manager_id'):
+                        member_ids.add(t['manager_id'])
+            employees = [e for e in employees if e['id'] in member_ids]
+        if emp_id:
+            employees = [e for e in employees if e['id'] == emp_id]
+        logs_by_emp = {}
+        for l in all_logs:
+            if l['date'] > end_date:
+                continue
+            logs_by_emp.setdefault(l['employee_id'], {}).setdefault(l['date'], []).append(l)
+        ABSENCE_ICON = {'vacation': '🏖', 'sick_leave': '🤒', 'business_trip': '✈️', 'remote': '🏠'}
+        STATUS_FILL_HEX = {'done': 'C8E6C9', 'in_progress': 'DCEDC8', 'planned': 'E0E0E0', 'blocked': 'FFCDD2'}
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = f'Календарь {month:02d}.{year}'
+        total_cols = days_in_month + 2
+        ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=total_cols)
+        ws['A1'] = f'Календарь задач: {month:02d}.{year}'
+        ws['A1'].font = Font(bold=True, size=14)
+        ws['A1'].alignment = Alignment(horizontal='center')
+        header_fill = PatternFill('solid', fgColor='2C3E50')
+        header_font = Font(bold=True, color='FFFFFF')
+        header_align = Alignment(horizontal='center', vertical='center', wrap_text=True)
+        thin = Side(style='thin', color='CCCCCC')
+        thin_border = Border(left=thin, right=thin, top=thin, bottom=thin)
+        for c, val in ((1, 'Сотрудник'), (2, 'Отдел')):
+            cell = ws.cell(row=3, column=c, value=val)
+            cell.font = header_font
+            cell.fill = header_fill
+            cell.alignment = header_align
+            cell.border = thin_border
+        WD = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс']
+        today = date.today()
+        for day in range(1, days_in_month + 1):
+            col = day + 2
+            d = date(year, month, day)
+            cell = ws.cell(row=3, column=col, value=f'{day:02d}\n{WD[d.weekday()]}')
+            cell.font = header_font
+            cell.fill = header_fill
+            cell.alignment = header_align
+            cell.border = thin_border
+            ds = d.strftime('%Y-%m-%d')
+            if ds in holidays:
+                cell.fill = PatternFill('solid', fgColor='FFE0E0')
+            elif d.weekday() >= 5:
+                cell.fill = PatternFill('solid', fgColor='EEEEEE')
+            if d == today:
+                cell.fill = PatternFill('solid', fgColor='C8E6C9')
+        row = 4
+        total_tasks = {day: 0 for day in range(1, days_in_month + 1)}
+        total_hours = {day: 0.0 for day in range(1, days_in_month + 1)}
+        for emp in employees:
+            ws.cell(row=row, column=1, value=emp.get('name', '')).font = Font(bold=True)
+            ws.cell(row=row, column=1).border = thin_border
+            ws.cell(row=row, column=2, value=emp.get('department', '')).border = thin_border
+            emp_logs = logs_by_emp.get(emp['id'], {})
+            emp_vacs = emp.get('vacations', [])
+            for day in range(1, days_in_month + 1):
+                col = day + 2
+                ds = date(year, month, day).strftime('%Y-%m-%d')
+                cell = ws.cell(row=row, column=col)
+                cell.border = thin_border
+                cell.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
+                vac = None
+                for v in emp_vacs:
+                    if v.get('from', '') <= ds <= v.get('to', ''):
+                        vac = v
+                        break
+                if vac:
+                    cell.value = ABSENCE_ICON.get(vac.get('type', 'vacation'), '📅')
+                    cell.font = Font(size=14)
+                    cell.fill = PatternFill('solid', fgColor='BBDEFB')
+                elif ds in emp_logs:
+                    logs = emp_logs[ds]
+                    first_status = (logs[0].get('status') or 'planned')
+                    cnt = len(logs)
+                    hrs = sum(float(l.get('hours') or 0) for l in logs)
+                    txt = f'{cnt} задач' if cnt > 1 else '1 задача'
+                    if hrs > 0:
+                        txt += f'\n{hrs:g}ч'
+                    cell.value = txt
+                    cell.fill = PatternFill('solid', fgColor=STATUS_FILL_HEX.get(first_status, 'F5F5F5'))
+                    total_tasks[day] += cnt
+                    total_hours[day] += hrs
+                else:
+                    cell.value = ''
+            row += 1
+        ws.cell(row=row, column=1, value='ИТОГО').font = Font(bold=True, size=11)
+        for c in (1, 2):
+            ws.cell(row=row, column=c).fill = PatternFill('solid', fgColor='FDEBD0')
+            ws.cell(row=row, column=c).border = thin_border
+        for day in range(1, days_in_month + 1):
+            col = day + 2
+            cell = ws.cell(row=row, column=col)
+            cell.border = thin_border
+            cell.fill = PatternFill('solid', fgColor='FDEBD0')
+            cell.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
+            if total_tasks[day] > 0:
+                cell.value = f'{total_tasks[day]}\n{total_hours[day]:g}ч'
+        ws.column_dimensions['A'].width = 25
+        ws.column_dimensions['B'].width = 16
+        for day in range(1, days_in_month + 1):
+            ws.column_dimensions[get_column_letter(day + 2)].width = 9
+        ws.row_dimensions[3].height = 40
+        for r in range(4, row + 1):
+            ws.row_dimensions[r].height = 38
+        from io import BytesIO
+        output = BytesIO()
+        wb.save(output)
+        output.seek(0)
+        filename = f'calendar_{year}_{month:02d}.xlsx'
+        return send_file(output, mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', as_attachment=True, download_name=filename)
+
+
     @app.route('/api/tracker/calendar', methods=['GET'])
     @login_required
     @permission_required('tab.calendar')
@@ -2278,9 +2637,8 @@ def create_app():
                     continue
                 _sd = t.get('start_date') or ''
                 _dl = t.get('deadline') or ''
+                # PATCH 1.0.24: не скрывать по deadline (просроченные тоже «не начаты»)
                 if _sd and dk < _sd:
-                    continue
-                if _dl and dk > _dl:
                     continue
                 for _aid in task_assignees.get(t['id'], []):
                     if _aid not in emps_by_id:
@@ -2302,7 +2660,9 @@ def create_app():
                         # PATCH v1.0.18: метка для приоритета/подсветки
                         'is_urgent': bool(t.get('is_urgent')),
                     })
-            day['not_started'] = day['not_started'][:30]
+            # PATCH v1.0.17: лимит 200; emps уже отфильтрованы по правам
+            # (сотрудник без block.calendar.other_employees — только свои)
+            day['not_started'] = day['not_started'][:200]
 
         for dk in days:
             days[dk]['entries'].sort(key=lambda x: -x['hours'])
@@ -3044,17 +3404,17 @@ def create_app():
             _eid = _l.get('employee_id', '')
             _e = em.get(_eid) or {}
             _cm = (_l.get('comment') or '').strip()
-            if _cm:
-                _feed.append({
-                    'date': _ld,
-                    'employee_id': _eid,
-                    'employee_name': _e.get('name', ''),
-                    'employee_color': _e.get('color', '#888'),
-                    'comment': _cm[:1500],
-                    'hours': float(_l.get('hours', 0) or 0),
-                    'status': _l.get('status', ''),
-                    'status_label': STATUS_LABELS.get(_l.get('status', ''), ''),
-                })
+            # PATCH v1.0.19: все отметки в ленте
+            _feed.append({
+                'date': _ld,
+                'employee_id': _eid,
+                'employee_name': _e.get('name', ''),
+                'employee_color': _e.get('color', '#888'),
+                'comment': _cm[:1500],
+                'hours': float(_l.get('hours', 0) or 0),
+                'status': _l.get('status', ''),
+                'status_label': STATUS_LABELS.get(_l.get('status', ''), ''),
+            })
             _lk = (_l.get('link') or '').strip()
             if _lk:
                 _links_list.append({
@@ -3678,7 +4038,7 @@ def create_app():
         if len(new) < 6:
             return jsonify({'success': False, 'error': 'parol минимум 6 символов'}), 400
         # PATCH v2: verify_kody / hash_kody (кириллица), поле kody_hash латиница
-        if not verify_kody(u['kody_hash'], old):
+        if not verify_kody((u.get('password_hash') or u.get('kody_hash') or ''), kody if 'kody' in dir() else password):
             return jsonify({'success': False, 'error': 'Неверный текущий parol'}), 400
         db.user_update(
             u['id'], u['role'], u.get('display_name', ''),
@@ -4044,13 +4404,41 @@ def create_app():
         except (ValueError, TypeError):
             limit = 50
         limit = min(max(1, limit), 200)
-        rows = db.query(
-            'SELECT id, ts, from_user_id, from_username, kind, task_id, employee_id, message, status, read_at '
-            'FROM notifications WHERE to_user_id=? ORDER BY id DESC LIMIT ?',
-            (u['id'], limit),
-        )
+        # PATCH 1.0.25: по умолчанию отдаём только непрочитанные.
+        # ?show=all — вернуть все (для «истории»).
+        _show = (request.args.get('show') or 'unread').strip().lower()
+        if _show == 'all':
+            rows = db.query(
+                'SELECT id, ts, from_user_id, from_username, kind, task_id, employee_id, message, status, read_at '
+                'FROM notifications WHERE to_user_id=? ORDER BY id DESC LIMIT ?',
+                (u['id'], limit),
+            )
+        else:
+            rows = db.query(
+                'SELECT id, ts, from_user_id, from_username, kind, task_id, employee_id, message, status, read_at '
+                'FROM notifications WHERE to_user_id=? AND read_at="" ORDER BY id DESC LIMIT ?',
+                (u['id'], limit),
+            )
         unread = sum(1 for r in rows if not r.get('read_at'))
-        return jsonify({'success': True, 'items': rows, 'unread': unread})
+        return jsonify({'success': True, 'items': rows, 'unread': unread, 'show': _show})
+
+    @app.route('/api/notifications/read_all', methods=['POST'])
+    @login_required
+    def api_notifications_read_all_global():
+        """PATCH 1.0.25: глобальный сброс — помечает прочитанными ВСЕ
+        непрочитанные уведомления всех пользователей. Только admin."""
+        u = current_user(db)
+        if (u or {}).get('role') != 'admin':
+            return jsonify({'success': False, 'error': 'forbidden'}), 403
+        now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        before = db.query_one(
+            "SELECT COUNT(*) AS n FROM notifications WHERE read_at=''"
+        ) or {'n': 0}
+        db.exec(
+            "UPDATE notifications SET read_at=? WHERE read_at=''", (now,)
+        )
+        _audit(db, u, 'update', 'notifications', 'all', {'cleared': before.get('n', 0)})
+        return jsonify({'success': True, 'cleared': before.get('n', 0)})
 
     @app.route('/api/notifications/read', methods=['POST'])
     @login_required
@@ -4090,6 +4478,9 @@ def create_app():
         row = db.query_one('SELECT * FROM notifications WHERE id=? AND to_user_id=?', (nid, u['id']))
         if not row:
             return jsonify({'success': False, 'error': 'not found'}), 404
+        # PATCH v1.0.16: confirm/reject только для task_done в статусе new
+        if (row.get('kind') or 'task_done') != 'task_done' or (row.get('status') or 'new') != 'new':
+            return jsonify({'success': False, 'error': 'action not allowed for this notification'}), 400
         now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         if action == 'accept':
             db.exec(

@@ -1,0 +1,36 @@
+{
+  "id": "1.0.24",
+  "target_version": "1.0.24",
+  "description": "Календарь «🩶 Назначено, не начато»: не прятать задачи после deadline; лимит 200; в режиме дня по сотруднику блок не скрывается. Экспорт ▾ — только 1.0.12 (1.0.14 не нужен).",
+  "requires": [],
+  "operations": [
+    {
+      "type": "replace",
+      "path": "app.py",
+      "optional": true,
+      "find": "                if _sd and dk < _sd:\n                    continue\n                if _dl and dk > _dl:\n                    continue\n",
+      "content": "                # PATCH 1.0.24: не скрывать по deadline (просроченные тоже «не начаты»)\n                if _sd and dk < _sd:\n                    continue\n"
+    },
+    {
+      "type": "replace",
+      "path": "app.py",
+      "optional": true,
+      "find": "            day['not_started'] = day['not_started'][:30]",
+      "content": "            day['not_started'] = day['not_started'][:200]"
+    },
+    {
+      "type": "replace",
+      "path": "app.py",
+      "optional": true,
+      "find": "            day['not_started'] = day['not_started'][:200]",
+      "content": "            day['not_started'] = day['not_started'][:200]"
+    },
+    {
+      "type": "replace",
+      "path": "static/tracker.js",
+      "optional": true,
+      "find": "    function render() {\n        var modal = document.getElementById('dayModal');\n        if (!modal || !modal.classList.contains('active')) return;\n        var st = window.__trkState;\n        if (st && st.dayViewMode === 'employee') return;\n        var day = currentDay();\n",
+      "content": "    function render() {\n        var modal = document.getElementById('dayModal');\n        if (!modal || !modal.classList.contains('active')) return;\n        var st = window.__trkState;\n        var day = currentDay();\n        // PATCH 1.0.24: в режиме сотрудника — только его not_started, не скрывать блок\n        if (day && st && st.dayViewMode === 'employee' && st.dayViewEmployeeId) {\n            var _eid = st.dayViewEmployeeId;\n            day = Object.assign({}, day, {\n                not_started: (day.not_started || []).filter(function(x){ return x.employee_id === _eid; })\n            });\n        }\n"
+    }
+  ]
+}

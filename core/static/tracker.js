@@ -1730,6 +1730,74 @@ function loadCalendar() {
         })
         .catch(function(err) { if (err && (err.message || '').indexOf('cancelled') !== -1) return; notify('❌ ' + (err.message || 'Ошибка'), 'error'); });
 }
+function exportCalendarToExcel() {
+    var month = state.calendar ? state.calendar.month : new Date().getMonth() + 1;
+    var year = state.calendar ? state.calendar.year : new Date().getFullYear();
+    var params = new URLSearchParams();
+    params.set('month', month);
+    params.set('year', year);
+    var deptFilter = document.getElementById('calDeptFilter');
+    if (deptFilter && deptFilter.value) params.set('department', deptFilter.value);
+    var teamFilter = document.getElementById('calTeamFilter');
+    if (teamFilter && teamFilter.value) params.set('team', teamFilter.value);
+    var empFilter = document.getElementById('calEmployeeFilter');
+    if (empFilter && empFilter.value) params.set('employee', empFilter.value);
+    notify('📊 Генерируем Excel...', 'info');
+    window.open('/api/tracker/calendar/export?' + params.toString(), '_blank');
+}
+
+(function(){
+    function bindExportCalendar() {
+        document.addEventListener('click', function(e) {
+            var t = e.target && e.target.closest ? e.target.closest('#exportCalendarBtn') : null;
+            if (t) exportCalendarToExcel();
+        });
+    }
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', bindExportCalendar);
+    else bindExportCalendar();
+})();
+
+function toggleExportMenu(force) {
+    var drop = document.getElementById('exportMenuDrop');
+    if (!drop) return;
+    var show = (force === true) || drop.style.display === 'none';
+    drop.style.display = show ? 'block' : 'none';
+}
+function runExportForm(form) {
+    toggleExportMenu(false);
+    if (form === 'calendar') { if (typeof exportCalendarToExcel === 'function') exportCalendarToExcel(); }
+    else if (form === 'debtors') exportDebtorsToExcel();
+}
+function exportDebtorsToExcel() {
+    var d = new Date();
+    var iso = d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
+    var params = new URLSearchParams();
+    params.set('date', iso);
+    var deptFilter = document.getElementById('calDeptFilter');
+    if (deptFilter && deptFilter.value) params.set('department', deptFilter.value);
+    var teamFilter = document.getElementById('calTeamFilter');
+    if (teamFilter && teamFilter.value) params.set('team', teamFilter.value);
+    notify('⚠️ Считаем, кто не заполнил отчёт...', 'info');
+    window.open('/api/tracker/export/debtors?' + params.toString(), '_blank');
+}
+(function(){
+    function bindExportMenu() {
+        document.addEventListener('click', function(e) {
+            var t = e.target;
+            if (!t || !t.closest) return;
+            if (t.closest('#exportMenuBtn')) { toggleExportMenu(); return; }
+            var item = t.closest('.export-menu-item');
+            if (item) { runExportForm(item.getAttribute('data-form')); return; }
+            var drop = document.getElementById('exportMenuDrop');
+            if (drop && drop.style.display !== 'none' && !t.closest('.export-menu-wrap')) {
+                drop.style.display = 'none';
+            }
+        });
+    }
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', bindExportMenu);
+    else bindExportMenu();
+})();
+
 function renderCalendar() {
     var cal = state.calendar; if (!cal) return;
     var titleEl = $('calMonthTitle');
@@ -7720,19 +7788,15 @@ loadState().then(function() {
                 }
                 return;
             }
-            var dm = document.getElementById('dayModal');
-            if (dm) dm.classList.remove('active');
-            // PATCH v1.0.6: обновляем активную вкладку
+            // PATCH v1.0.20: закрыть все модалки, без повторного открытия dayModal
+            ['dayModal','logModal','trkNoticeModal'].forEach(function(id){
+                var el = document.getElementById(id);
+                if (el) el.classList.remove('active');
+            });
             var _refresh = (typeof window.__trkRefreshAll === 'function')
                 ? window.__trkRefreshAll
                 : (typeof window.__trkRenderCalendar === 'function' ? window.__trkRenderCalendar : null);
-            if (_refresh) {
-                Promise.resolve(_refresh()).then(function() {
-                    if (typeof window.__trkOpenDayModal === 'function') {
-                        window.__trkOpenDayModal(dk);
-                    }
-                });
-            }
+            if (_refresh) { Promise.resolve(_refresh()); }
         }).catch(function(err) {
             if (err && err.message && err.message.indexOf('cancelled') !== -1) return;
             if (typeof window.__trackerNotify === 'function') {
@@ -9593,6 +9657,41 @@ loadState().then(function() {
     function fd(iso){if(!iso)return '';var p=iso.split('-');if(p.length!==3)return iso;return p[2]+'.'+p[1]+'.'+p[0];}
 
     window.__trkTaskFeedRender = function(d){
+        if (!document.getElementById('tcfStyleV19')) {
+            var _s = document.createElement('style');
+            _s.id = 'tcfStyleV19';
+            _s.textContent = [
+                '.tcf-wrap{margin:12px 0 8px}',
+                '.tcf-block{background:rgba(255,255,255,0.03);border:1px solid rgba(245,215,110,0.12);border-radius:12px;padding:12px 14px}',
+                '.tcf-head{display:flex;align-items:center;gap:8px;margin-bottom:10px;flex-wrap:wrap}',
+                '.tcf-title{font-weight:700;font-size:0.95rem}',
+                '.tcf-meta{opacity:0.55;font-size:0.8rem;margin-left:auto}',
+                '.tcf-feed{display:flex;flex-direction:column;gap:8px;max-height:320px;overflow:auto;padding-right:4px}',
+                '.tcf-item{display:flex;gap:10px;padding:8px 10px;border-radius:10px;background:rgba(0,0,0,0.18);border-left:3px solid rgba(245,215,110,0.35)}',
+                '.tcf-item--done{border-left-color:#2ecc71}',
+                '.tcf-item--blocked{border-left-color:#e74c3c}',
+                '.tcf-item--planned{border-left-color:#95a5a6}',
+                '.tcf-item--in_progress{border-left-color:#3498db}',
+                '.tcf-av{width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:0.7rem;font-weight:700;color:#111;flex-shrink:0}',
+                '.tcf-body{flex:1;min-width:0}',
+                '.tcf-line1{display:flex;flex-wrap:wrap;gap:6px 10px;align-items:center;font-size:0.82rem}',
+                '.tcf-name{font-weight:600}',
+                '.tcf-date{opacity:0.55}',
+                '.tcf-st{font-size:0.75rem;padding:1px 6px;border-radius:6px;background:rgba(255,255,255,0.06)}',
+                '.tcf-st-done{color:#2ecc71}',
+                '.tcf-st-blocked{color:#e74c3c}',
+                '.tcf-h{font-weight:700;color:#f5d76e}',
+                '.tcf-text{margin-top:4px;font-size:0.85rem;line-height:1.35;white-space:pre-wrap;word-break:break-word}',
+                '.tcf-text-muted{opacity:0.4;font-style:italic}',
+                '.tcf-empty{opacity:0.45;padding:8px 0;font-size:0.85rem}',
+                '.tcf-links-head{margin-top:10px;font-weight:600;font-size:0.85rem}',
+                '.tcf-links{display:flex;flex-direction:column;gap:4px;margin-top:6px}',
+                '.tcf-link{display:flex;gap:8px;font-size:0.8rem;color:#7ec8ff;text-decoration:none}',
+                '.tcf-link:hover{text-decoration:underline}'
+            ].join('');
+            document.head.appendChild(_s);
+        }
+
         var wrap = document.getElementById('taskCardFeed');
         if (!wrap) {
             var modal = document.getElementById('taskCardModal');
@@ -9621,22 +9720,28 @@ loadState().then(function() {
         h += '</span>';
         h += '</div>';
         if (!feed.length && !links.length) {
-            h += '<div class="tcf-empty">Пока пусто</div>';
+            h += '<div class="tcf-empty">Пока нет отметок по этой задаче</div>';
         } else {
             if (feed.length) {
                 h += '<div class="tcf-feed">';
                 feed.forEach(function(x){
                     var bg = esc(x.employee_color || '#888');
-                    h += '<div class="tcf-item">';
+                    var st = String(x.status || '');
+                    var stCls = st === 'done' ? 'tcf-st-done' : (st === 'blocked' ? 'tcf-st-blocked' : (st === 'planned' ? 'tcf-st-planned' : 'tcf-st-work'));
+                    h += '<div class="tcf-item tcf-item--' + esc(st || 'log') + '">';
                     h += '<div class="tcf-av" style="background:' + bg + ';">' + esc(initials(x.employee_name)) + '</div>';
                     h += '<div class="tcf-body">';
                     h += '<div class="tcf-line1">';
                     h += '<span class="tcf-name">' + esc(x.employee_name) + '</span>';
                     h += '<span class="tcf-date">' + esc(fd(x.date)) + '</span>';
-                    if (x.status_label) h += '<span class="tcf-st">' + esc(x.status_label) + '</span>';
+                    if (x.status_label) h += '<span class="tcf-st ' + stCls + '">' + esc(x.status_label) + '</span>';
                     if (x.hours) h += '<span class="tcf-h">' + esc(fh(x.hours)) + '</span>';
                     h += '</div>';
-                    h += '<div class="tcf-text">' + esc(x.comment) + '</div>';
+                    if (x.comment) {
+                        h += '<div class="tcf-text">' + esc(x.comment) + '</div>';
+                    } else {
+                        h += '<div class="tcf-text tcf-text-muted">отметка без комментария</div>';
+                    }
                     h += '</div></div>';
                 });
                 h += '</div>';
@@ -10370,9 +10475,25 @@ loadState().then(function() {
     function render() {
         var modal = document.getElementById('dayModal');
         if (!modal || !modal.classList.contains('active')) return;
-        var st = window.__trkState;
-        if (st && st.dayViewMode === 'employee') return;
+        var st = window.__trkState || {};
         var day = currentDay();
+        // PATCH 1.0.26: не-админ видит только свои задачи в not_started
+        if (day) {
+            var _perms = window.REESTR_PERMS || {};
+            var _meId = (st.currentUser && st.currentUser.employee_id) || '';
+            var _isAdmin = !!(_perms['action.log.edit.any'] || _perms['block.calendar.other_employees']);
+            var _ns = (day.not_started || []).slice();
+            if (!_isAdmin) {
+                if (!_meId) {
+                    _ns = [];
+                } else if (st.dayViewMode === 'employee' && st.dayViewEmployeeId) {
+                    _ns = _ns.filter(function(x){ return x.employee_id === st.dayViewEmployeeId; });
+                } else {
+                    _ns = _ns.filter(function(x){ return x.employee_id === _meId; });
+                }
+            }
+            day = Object.assign({}, day, { not_started: _ns });
+        }
         var sig = signature(day);
         if (sig === _lastSig) return;
         _lastSig = sig;
@@ -11351,6 +11472,14 @@ window.fetch = function(url, opts) {
                 if (tabId === 'tasks' && typeof window.__trkRenderTasksFull === 'function') {
                     try { window.__trkRenderTasksFull(); } catch (e) { console.error('[save-refresh]', e); }
                 }
+                // PATCH v1.0.17: сразу обновляем календарь — «назначено, не начато»
+                if (typeof window.__trkLoadState === 'function') {
+                    try { window.__trkLoadState(); } catch (e) {}
+                }
+                var _cal = window.__trkRenderCalendar;
+                if (typeof _cal === 'function') {
+                    try { _cal(); } catch (e) { console.error('[save-refresh-cal]', e); }
+                }
             }, 250);
         }
         return r;
@@ -11572,7 +11701,11 @@ function _renderList(items) {
         d.innerHTML = '<div class="trk-bell-head">Уведомления</div><div class="trk-bell-empty">Нет уведомлений</div>';
         return;
     }
-    var h = '<div class="trk-bell-head">Уведомления <button type="button" class="trk-bell-markall" id="trkBellMarkAll">Прочитать все</button></div>';
+    var _isAdmin = !!(window.__trkState && window.__trkState.currentUser && window.__trkState.currentUser.role === 'admin');
+    var h = '<div class="trk-bell-head">Уведомления'
+          + '<button type="button" class="trk-bell-markall" id="trkBellMarkAll">Прочитать все</button>'
+          + (_isAdmin ? '<button type="button" class="trk-bell-markall trk-bell-markall--global" id="trkBellMarkAllGlobal" title="Пометить прочитанными у всех пользователей">Сбросить всем</button>' : '')
+          + '</div>';
     items.forEach(function(it) {
         var status = it.status || 'new';
         var statusCls = status === 'confirmed' ? 'confirmed' : (status === 'rejected' ? 'rejected' : '');
@@ -11590,15 +11723,22 @@ function _renderList(items) {
                 }
             }
         } catch (e) { console.error('[bell-mask]', e); }
-        h += '<div class="trk-bell-item trk-bell-item--task_done ' + statusCls + '" data-nid="' + it.id + '" data-tid="' + _esc(it.task_id) + '">'
-          +   '<span class="trk-bell-ico">✅</span>'
+        var _kind = it.kind || 'task_done';
+        var _ico = (_kind === 'task_created') ? '🆕' : '✅';
+        var _needConfirm = (_kind === 'task_done' && status === 'new');
+        var _badge = '';
+        if (status === 'confirmed') _badge = '<div class="trk-bell-badge ok">принято</div>';
+        else if (status === 'rejected') _badge = '<div class="trk-bell-badge err">отклонено</div>';
+        else if (status === 'info' || _kind === 'task_created') _badge = '<div class="trk-bell-badge">инфо</div>';
+        h += '<div class="trk-bell-item trk-bell-item--' + _esc(_kind) + ' ' + statusCls + '" data-nid="' + it.id + '" data-tid="' + _esc(it.task_id) + '" data-kind="' + _esc(_kind) + '">'
+          +   '<span class="trk-bell-ico">' + _ico + '</span>'
           +   '<div class="trk-bell-body">'
           +     '<div class="trk-bell-name">' + _esc(_msgText) + '</div>'
           +     '<div class="trk-bell-meta">' + _esc(_fmtTs(it.ts)) + (it.from_username ? ' · ' + _esc(it.from_username) : '') + '</div>'
-          +     (status === 'new' ? '<div class="trk-bell-actions">'
+          +     (_needConfirm ? '<div class="trk-bell-actions">'
           +         '<button type="button" class="trk-bell-act ok" data-act="accept">✓ Принять</button>'
           +         '<button type="button" class="trk-bell-act err" data-act="reject">✗ Отклонить</button>'
-          +       '</div>' : (status === 'confirmed' ? '<div class="trk-bell-badge ok">принято</div>' : '<div class="trk-bell-badge err">отклонено</div>'))
+          +       '</div>' : _badge)
           +   '</div>'
           + '</div>';
     });
@@ -11640,6 +11780,23 @@ function _renderList(items) {
             credentials: 'same-origin',
             body: JSON.stringify({}),
         }).then(function() { refresh(); });
+    });
+    var markAllGlobal = d.querySelector('#trkBellMarkAllGlobal');
+    if (markAllGlobal) markAllGlobal.addEventListener('click', function() {
+        if (!confirm('Пометить ПРОЧИТАННЫМИ все уведомления у ВСЕХ пользователей?')) return;
+        fetch('/api/notifications/read_all', {
+            method: 'POST',
+            headers: Object.assign({'Content-Type': 'application/json'}, window.REESTR_CSRF ? {'X-CSRF-Token': window.REESTR_CSRF} : {}),
+            credentials: 'same-origin',
+            body: JSON.stringify({}),
+        }).then(function(r) { return r.json(); }).then(function(res) {
+            if (res && res.success) {
+                if (typeof notify === 'function') notify('✅ Сброшено: ' + (res.cleared || 0));
+                refresh();
+            } else if (typeof notify === 'function') {
+                notify('❌ ' + ((res && res.error) || 'Ошибка'), 'error');
+            }
+        }).catch(function(){});
     });
 }
 
@@ -16548,8 +16705,11 @@ function _saveDirect(tid, empId, tile){
             return;
         }
         _notify('✅ Отметка добавлена');
-        var dm = document.getElementById('dayModal');
-        if (dm) dm.classList.remove('active');
+        // PATCH v1.0.20: закрыть все карточки — Save не нужен
+        ['dayModal','logModal','trkNoticeModal'].forEach(function(id){
+            var el = document.getElementById(id);
+            if (el) el.classList.remove('active');
+        });
         var _refresh = (typeof window.__trkRefreshAll === 'function')
             ? window.__trkRefreshAll
             : (typeof window.__trkRenderCalendar === 'function' ? window.__trkRenderCalendar : null);
@@ -16704,8 +16864,11 @@ function _saveDirect(tid, empId, tile){
             return;
         }
         _notify('✅ Отметка добавлена');
-        var dm = document.getElementById('dayModal');
-        if (dm) dm.classList.remove('active');
+        // PATCH v1.0.20: закрыть все карточки — Save не нужен
+        ['dayModal','logModal','trkNoticeModal'].forEach(function(id){
+            var el = document.getElementById(id);
+            if (el) el.classList.remove('active');
+        });
         var _refresh = (typeof window.__trkRefreshAll === 'function')
             ? window.__trkRefreshAll
             : (typeof window.__trkRenderCalendar === 'function' ? window.__trkRenderCalendar : null);

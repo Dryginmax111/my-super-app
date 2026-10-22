@@ -1136,9 +1136,43 @@ def _create_employee_from_import(db, fio, role, dept_id, all_employees):
         i += 1; emp_id = f'{base}_{i}'
     try:
         db.upsert_employee(emp_id, fio, '#00897b', (role or '')[:50], dept_id, False, '', '')
-        return emp_id, None
     except Exception as e:
         return None, str(e)
+    # PATCH v1.0.18: пользовательский профиль с базовыми правами и parol 123456
+    try:
+        existing_user = db.query_one('SELECT id FROM users WHERE employee_id=?', (emp_id,))
+        if not existing_user:
+            from auth import hash_kody, DEFAULT_USER_PERMISSIONS
+            # translit username
+            _tr = {
+                'а':'a','б':'b','в':'v','г':'g','д':'d','е':'e','ё':'e','ж':'zh','з':'z',
+                'и':'i','й':'y','к':'k','л':'l','м':'m','н':'n','о':'o','п':'p','р':'r',
+                'с':'s','т':'t','у':'u','ф':'f','х':'h','ц':'ts','ч':'ch','ш':'sh','щ':'sch',
+                'ъ':'','ы':'y','ь':'','э':'e','ю':'yu','я':'ya',
+            }
+            out = []
+            for ch in str(fio or '').strip().lower():
+                if ch.isascii() and ch.isalnum():
+                    out.append(ch)
+                elif ch in _tr:
+                    out.append(_tr[ch])
+                elif ch in (' ', '-', '_', '.'):
+                    out.append('_')
+            uname = (''.join(out).strip('_') or 'user')[:32]
+            base_u = uname
+            j = 1
+            while db.user_get_by_name(uname):
+                j += 1
+                uname = f'{base_u}_{j}'
+            new_uid = db.user_create(uname, hash_kody('123456'), 'user', fio, emp_id)
+            try:
+                db.user_permissions_set(new_uid, {k: True for k in DEFAULT_USER_PERMISSIONS})
+            except Exception as _pe:
+                print(f'[import] permissions_set failed: {_pe}')
+            print(f'[import] user created: {uname} / emp={emp_id}')
+    except Exception as e:
+        print(f'[import] auto-create user failed for {fio}: {e}')
+    return emp_id, None
 
 
 _SKIP_SHEETS = {'график', 'graph', 'schedule', 'chart', 'графикработ', 'graphwork', 'лист1'}

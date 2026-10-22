@@ -1,11 +1,5 @@
-<<<<<<< Updated upstream
-
-__pycache__/
-*.pyc
-=======
 __pycache__/
 *.pyc
 tools/wheels/
-task_tracker.db
+#task_tracker.db
 task_tracker.db-journal
->>>>>>> Stashed changes

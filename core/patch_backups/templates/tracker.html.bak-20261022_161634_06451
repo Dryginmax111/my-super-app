@@ -1,0 +1,684 @@
+{% extends "base.html" %}
+{% block title %}Трекер задач{% endblock %}
+{% block body %}
+{% set P = perms %}
+{% set AT = active_tab or 'calendar' %}
+<div class="tracker-container">
+    <div class="tracker-header">
+        <div class="tracker-title"><span>📌</span><span>Трекер задач</span></div>
+        {% if P.get('action.mask.use') %}
+        <button class="mask-toggle-btn" id="trkMaskToggle" title="Скрыть/показать ФИО в таблицах">
+            <span id="trkMaskIcon">👁</span>
+            <span id="trkMaskLabel">Маска ФИО</span>
+        </button>
+        {% endif %}
+        <button class="theme-toggle-btn" id="trkThemeToggle" title="Переключить тему">
+            <span id="trkThemeIcon">☀️</span>
+            <span id="trkThemeLabel">Светлая</span>
+        </button>
+        <button class="theme-toggle-btn trk-bell" id="trkBell" type="button" title="Уведомления">
+            <span>🔔</span>
+            <span class="trk-bell-cnt" id="trkBellCount" style="display:none;">0</span>
+        </button>
+        <div class="user-menu" id="userMenu">
+            {% set _disp = current_user.display_name or current_user.username %}
+            {% set _parts = _disp.split() %}
+            {% set _p1 = _parts[0] if _parts else '?' %}
+            {% set _p2 = _parts[1] if _parts|length > 1 else '' %}
+            {% set _ini = (_p1[:1] + (_p2[:1] if _p2 else _p1[1:2]))|upper %}
+            <button type="button" class="user-chip" id="userChip" aria-haspopup="true" aria-expanded="false" title="{{ _disp }}{% if current_user.role == 'admin' %} · admin{% endif %}">
+                <span class="user-avatar">{{ _ini }}</span>
+                <span class="user-caret">▾</span>
+            </button>
+            <div class="user-dropdown" id="userDropdown">
+                {% if current_user and current_user.employee_id %}
+                <a class="ud-item" href="/plugins/my_profile/">
+                    <span class="ud-icon">👤</span>
+                    <span class="ud-label">Мой профиль</span>
+                </a>
+                {% endif %}
+                {% if P.get('tab.settings') %}
+                <a class="ud-item" href="{{ url_for('settings_page') }}">
+                    <span class="ud-icon">⚙️</span>
+                    <span class="ud-label">Админ-панель</span>
+                </a>
+                {% endif %}
+                <div class="ud-sep"></div>
+                <form method="post" action="{{ url_for('logout') }}" class="ud-form">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                    <button type="submit" class="ud-item ud-danger">
+                        <span class="ud-icon">🚪</span>
+                        <span class="ud-label">Выйти из учётной записи</span>
+                    </button>
+                </form>
+            </div>
+        </div>
+    </div>
+    <div class="tracker-tabs">
+        {% if P.get('tab.calendar') %}<button class="tracker-tab{% if AT == 'calendar' %} active{% endif %}" data-tab="calendar"><span>📅</span><span>Календарь</span></button>{% endif %}
+        {% if P.get('tab.tasks') %}<button class="tracker-tab{% if AT == 'tasks' %} active{% endif %}" data-tab="tasks"><span>📋</span><span>Задачи</span></button>{% endif %}
+        {% if P.get('tab.heatmap') %}<button class="tracker-tab{% if AT == 'heatmap' %} active{% endif %}" data-tab="heatmap"><span>🔥</span><span>Тепловая карта</span></button>{% endif %}
+        {% if P.get('tab.summary') %}<button class="tracker-tab{% if AT == 'summary' %} active{% endif %}" data-tab="summary"><span>📊</span><span>Свод</span></button>{% endif %}
+        {% if P.get('tab.stats') %}<button class="tracker-tab{% if AT == 'stats' %} active{% endif %}" data-tab="stats"><span>📈</span><span>Статистика</span></button>{% endif %}
+        {% if P.get('tab.dicts') %}<button class="tracker-tab{% if AT == 'dicts' %} active{% endif %}" data-tab="dicts"><span>⚙️</span><span>Справочники</span></button>{% endif %}
+    </div>
+    <!-- ============================== КАЛЕНДАРЬ ============================== -->
+    {% if P.get('tab.calendar') %}
+    <div class="tracker-panel{% if AT == 'calendar' %} active{% endif %}" id="panel-calendar">
+        <div class="cal-toolbar">
+            <div class="cal-nav">
+                <button class="cal-nav-btn" id="calPrevBtn">◀</button>
+                <button class="cal-nav-btn" id="calTodayBtn">Сегодня</button>
+                <button class="cal-nav-btn" id="calNextBtn">▶</button>
+            </div>
+            <div class="cal-month-title" id="calMonthTitle">—</div>
+            <div class="segmented" id="calViewMode">
+                <button class="active" data-mode="tasks">📋 Задачи</button>
+                <button data-mode="employees">👥 Сотрудники</button>
+            </div>
+            <button class="theme-toggle-btn" id="calExpandToggle"
+                    title="Разворачивать ячейку дня при наведении">
+                <span id="calExpandIcon">⤢</span>
+                <span id="calExpandLabel">Разворот дня: вкл</span>
+            </button>
+            <div class="export-menu-wrap" style="position:relative;display:inline-block;">
+                <button class="dict-add-btn" id="exportMenuBtn" style="background:linear-gradient(135deg,#27ae60,#229954);">📥 Экспорт ▾</button>
+                <div id="exportMenuDrop" style="display:none;position:absolute;top:calc(100% + 4px);left:0;z-index:9999;background:#141414;border:1px solid rgba(245,215,110,0.22);border-radius:10px;box-shadow:0 8px 32px rgba(0,0,0,0.55);min-width:260px;padding:6px;">
+                    <div class="export-menu-item" data-form="calendar" style="padding:9px 12px;border-radius:8px;cursor:pointer;color:#e8e8e8;font-size:0.9rem;">📅 Календарь (полный)</div>
+                    <div class="export-menu-item" data-form="debtors" style="padding:9px 12px;border-radius:8px;cursor:pointer;color:#e8e8e8;font-size:0.9rem;">⚠️ Кто не заполнил отчёт (сегодня)</div>
+                </div>
+            </div>
+            {% if P.get('block.calendar.dept_filter') %}
+            <label class="cal-emp-filter" style="margin-left:auto;" title="Отдел">
+                <span>🏢</span><select id="calDeptFilter"><option value="">Отделы</option></select>
+            </label>
+            {% endif %}
+            {% if P.get('block.calendar.team_filter') %}
+            <label class="cal-emp-filter" title="Команда">
+                <span>👥</span><select id="calTeamFilter"><option value="">Команды</option></select>
+            </label>
+            {% endif %}
+            {% if P.get('block.calendar.employee_filter') %}
+            <label class="cal-emp-filter" title="Сотрудник">
+                <span>👤</span><select id="calEmployeeFilter"><option value="">Сотрудники</option></select>
+            </label>
+            {% endif %}
+        </div>
+        <div class="cal-grid" id="calGrid" data-expand="on">
+            <div class="cal-dow">Пн</div><div class="cal-dow">Вт</div><div class="cal-dow">Ср</div>
+            <div class="cal-dow">Чт</div><div class="cal-dow">Пт</div><div class="cal-dow">Сб</div>
+            <div class="cal-dow">Вс</div>
+        </div>
+    </div>
+    {% endif %}
+    <!-- ============================== ЗАДАЧИ ============================== -->
+    {% if P.get('tab.tasks') %}
+    <div class="tracker-panel{% if AT == 'tasks' %} active{% endif %}" id="panel-tasks">
+        <div class="sum-toolbar">
+            <label class="sum-filter" title="Отдел"><span>🏢</span>
+                <select id="tskDeptFilter"><option value="">Отделы</option></select>
+            </label>
+            <label class="sum-filter" title="Команда"><span>👥</span>
+                <select id="tskTeamFilter"><option value="">Команды</option></select>
+            </label>
+            <label class="sum-filter" title="Сотрудник"><span>👤</span>
+                <select id="tskEmployeeFilter"><option value="">Сотрудники</option></select>
+            </label>
+            <label class="sum-filter" title="Тег"><span>🏷</span>
+                <select id="tskTagFilter" class="tag-filter-select"><option value="">Все теги</option></select>
+            </label>
+            <label class="sum-filter tsk-search-wrap" title="Поиск по названию, описанию, приказу, папке и тегам">
+                <span>🔍</span>
+                <input type="text" id="tskSearchInput" placeholder="Поиск…" autocomplete="off">
+                <button type="button" class="tsk-search-clear" id="tskSearchClear" title="Очистить (Esc)" style="display:none;">×</button>
+            </label>
+            <span class="tsk-search-count" id="tskSearchCount"></span>
+            <label class="sum-filter" title="Сортировка"><span>⇅</span>
+                <select id="tskSortSelect" class="sort-select">
+                    <option value="deadline_asc">Дедлайн ↑</option>
+                    <option value="deadline_desc">Дедлайн ↓</option>
+                    <option value="created_desc">Новые сверху</option>
+                    <option value="created_asc">Старые сверху</option>
+                    <option value="name_asc">Имя A→Я</option>
+                    <option value="name_desc">Имя Я→A</option>
+                    <option value="status">По статусу</option>
+                    <option value="overdue_first">Просрочка сверху</option>
+                </select>
+            </label>
+            <div class="segmented" id="tskViewSeg" title="Вид отображения задач">
+                <button type="button" data-view="tile" title="Плитка">▢ Плитка</button>
+                <button type="button" data-view="compact" title="Компактные плитки">☰ Компактно</button>
+                <button type="button" data-view="list" title="Список (как в Справочниках)">📋 Список</button>
+            </div>
+            <label class="sum-filter tsk-cols-wrap" id="tskColsWrap" title="Сколько колонок в плитке">
+                <span>▦</span>
+                <select id="tskGridCols">
+                    <option value="1">1 колонка</option>
+                    <option value="2">2 колонки</option>
+                    <option value="3" selected>3 колонки</option>
+                    <option value="4">4 колонки</option>
+                    <option value="5">5 колонок</option>
+                </select>
+            </label>
+            <div class="segmented" id="tskViewMode" style="margin-left:auto;">
+                <button class="active" data-mode="all">Все</button>
+                <button data-mode="active">Активные</button>
+                <button data-mode="overdue">Просроченные</button>
+                <button data-mode="attention">🚨 Проблемные</button>
+                <button data-mode="done">Выполненные</button>
+                <button data-mode="archived">Архив</button>
+            </div>
+            {% if P.get('action.task.create') %}
+            <button class="dict-add-btn" id="addTaskBtn2">➕ Новая</button>
+            {% endif %}
+        </div>
+        <div class="tasks-grid" id="tasksFullList" data-cols="3"><div class="dict-empty">Загрузка...</div></div>
+    </div>
+    {% endif %}
+    <!-- ============================== HEATMAP ============================== -->
+    {% if P.get('tab.heatmap') %}
+    <div class="tracker-panel{% if AT == 'heatmap' %} active{% endif %}" id="panel-heatmap">
+        <div class="hm-toolbar">
+            <div class="cal-nav">
+                <button class="cal-nav-btn" id="hmPrevBtn">◀</button>
+                <button class="cal-nav-btn" id="hmTodayBtn">Сегодня</button>
+                <button class="cal-nav-btn" id="hmNextBtn">▶</button>
+            </div>
+            <div class="cal-month-title" id="hmMonthTitle">—</div>
+            <div class="segmented" id="hmPeriodSeg">
+                <button data-p="week">Неделя</button>
+                <button data-p="month" class="active">Месяц</button>
+                <button data-p="quarter">Квартал</button>
+                <button data-p="year">Год</button>
+            </div>
+            <label class="sum-filter" style="margin-left:auto;" title="Отдел"><span>🏢</span>
+                <select id="hmDeptFilter" style="display:none;"><option value="">Отделы</option></select><div id="hmDeptPills" class="hm-dept-pills"></div>
+            </label>
+            <label class="sum-filter" title="Команда"><span>👥</span>
+                <select id="hmTeamFilter"><option value="">Команды</option></select>
+            </label>
+            <label class="sum-filter"><span>С</span><input type="date" id="hmDateFrom"></label>
+            <label class="sum-filter"><span>По</span><input type="date" id="hmDateTo"></label>
+            <button class="btn btn-secondary" id="hmApplyBtn">Применить</button>
+            <button class="btn btn-secondary" id="hmMonthBtn">Текущий</button>
+        </div>
+        <div class="hm-table-wrap" id="hmWrap"><div class="sum-empty">Загрузка...</div></div>
+        <div class="hm-legend">
+            <span>Загрузка:</span>
+            <div class="hm-legend-bar" id="hmLegendBar"></div>
+            <span style="margin-left:12px;">Прочее:</span>
+            <span class="hm-legend-item"><span class="hm-legend-swatch" style="background: repeating-linear-gradient(45deg, rgba(52,152,219,0.15) 0, rgba(52,152,219,0.15) 4px, rgba(52,152,219,0.30) 4px, rgba(52,152,219,0.30) 8px);"></span>🏖 Отпуск</span>
+            <span class="hm-legend-item"><span class="hm-legend-swatch" style="background: repeating-linear-gradient(45deg, rgba(243,156,18,0.15) 0, rgba(243,156,18,0.15) 4px, rgba(243,156,18,0.30) 4px, rgba(243,156,18,0.30) 8px);"></span>🤒 Больничный</span>
+            <span class="hm-legend-item"><span class="hm-legend-swatch" style="background: repeating-linear-gradient(45deg, rgba(155,89,182,0.15) 0, rgba(155,89,182,0.15) 4px, rgba(155,89,182,0.30) 4px, rgba(155,89,182,0.30) 8px);"></span>✈️ Командировка</span>
+            <span class="hm-legend-item"><span class="hm-legend-swatch" style="background: rgba(231,76,60,0.22);"></span>Не заполнено</span>
+            <span class="hm-legend-item"><span class="hm-legend-swatch" style="background: var(--trk-weekend-bg);"></span>Выходной</span>
+            <span class="hm-legend-item"><span class="hm-legend-swatch" style="background: var(--trk-holiday-bg);"></span>Праздник</span>
+        </div>
+    </div>
+    {% endif %}
+    <!-- ============================== СВОД ============================== -->
+    {% if P.get('tab.summary') %}
+    <div class="tracker-panel{% if AT == 'summary' %} active{% endif %}" id="panel-summary">
+        <div class="sum-toolbar">
+            <div class="period-arrows" title="Предыдущая неделя">
+                <button class="period-arrow-btn" id="sumPrevWeekBtn">◀</button>
+                <button class="period-arrow-btn week" id="sumPrevDayBtn">−1д</button>
+            </div>
+            <div class="sum-group">
+                <input type="date" id="sumDateFrom">
+                <span class="sum-dash">—</span>
+                <input type="date" id="sumDateTo">
+            </div>
+            <div class="period-arrows" title="Следующая неделя">
+                <button class="period-arrow-btn week" id="sumNextDayBtn">+1д</button>
+                <button class="period-arrow-btn" id="sumNextWeekBtn">▶</button>
+            </div>
+            <button class="btn btn-secondary" id="sumWeekBtn">📅 Неделя</button>
+            <button class="btn btn-secondary" id="sumMonthBtn">📆 Месяц</button>
+            <button class="btn btn-primary" id="sumApplyBtn">✓ Применить</button>
+            {% if P.get('block.summary.day_totals') %}
+            <label class="sum-toggle" title="Показывать строку «Итого за день»">
+                <input type="checkbox" id="sumShowDayTotals" checked><span>Итоги</span>
+            </label>
+            {% endif %}
+            <div class="segmented" id="sumViewMode">
+                {% if P.get('block.summary.grid_view') %}<button class="active" data-mode="grid" title="Сетка">📋</button>{% endif %}
+                <button data-mode="compact" title="Кратко">📊</button>
+                {% if P.get('block.summary.full_view') %}<button data-mode="full" title="Подробно">🔍</button>{% endif %}
+            </div>
+            <div class="segmented" id="sumTaskRowMode" title="Вид строк задач (только для режима Сетка)">
+                <button data-mode="compact" title="Только название">☰</button>
+                <button class="active" data-mode="full" title="Название + даты + теги">🔍</button>
+            </div>
+            <label class="sum-filter sum-compact" title="Отдел"><span>🏢</span>
+                <select id="sumDeptFilter"><option value="">Отделы</option></select>
+            </label>
+            <label class="sum-filter sum-compact" title="Команда"><span>👥</span>
+                <select id="sumTeamFilter"><option value="">Команды</option></select>
+            </label>
+            <label class="sum-filter sum-compact" title="Сотрудник"><span>👤</span>
+                <select id="sumEmployeeFilter"><option value="">Сотрудники</option></select>
+            </label>
+            <label class="sum-filter sum-compact" title="Задача"><span>📋</span>
+                <select id="sumTaskFilter"><option value="">Задачи</option></select>
+            </label>
+            <label class="sum-filter" title="Тег"><span>🏷</span>
+                <select id="sumTagFilter" class="tag-filter-select"><option value="">Все теги</option></select>
+            </label>
+        </div>
+        <div class="sum-table-wrap" id="sumWrap"><div class="sum-empty">Загрузка...</div></div>
+        <div id="sumExtras"></div>
+    </div>
+    {% endif %}
+    <!-- ============================== СТАТИСТИКА ============================== -->
+    {% if P.get('tab.stats') %}
+    <div class="tracker-panel{% if AT == 'stats' %} active{% endif %}" id="panel-stats">
+        <div class="sum-toolbar">
+            <label class="sum-filter"><span>📅</span><input type="date" id="stDateFrom"></label>
+            <label class="sum-filter"><span>→</span><input type="date" id="stDateTo"></label>
+            <button class="btn btn-secondary" id="stApplyBtn">Применить</button>
+            <button class="btn btn-secondary" id="stMonthBtn">Текущий</button>
+            <label class="sum-filter"><span>🏢</span><select id="stDeptFilter"><option value="">Отделы</option></select></label>
+            <label class="sum-filter"><span>👥</span><select id="stTeamFilter"><option value="">Команды</option></select></label>
+            <label class="sum-filter"><span>👤</span><select id="stEmployeeFilter"><option value="">Сотрудники</option></select></label>
+            <label class="sum-filter" title="Тег"><span>🏷</span>
+                <select id="stTagFilter" class="tag-filter-select"><option value="">Все теги</option></select>
+            </label>
+        </div>
+        <div id="stOverall" class="stats-overall"></div>
+        <div id="stCharts" class="charts-grid"></div>
+        <div id="stOverdue" class="sum-extra-block" style="margin:14px 0; display:none;"></div>
+        <div id="stTagsBlock" class="sum-extra-block" style="margin-bottom:14px; display:none;"></div>
+        <div id="stExtras"></div>
+    </div>
+    {% endif %}
+    <!-- ============================== СПРАВОЧНИКИ ============================== -->
+    {% if P.get('tab.dicts') %}
+    <div class="tracker-panel{% if AT == 'dicts' %} active{% endif %}" id="panel-dicts">
+        <div class="dict-grid">
+            <div class="dict-section">
+                <div class="dict-section-head">
+                    <span class="dict-section-title">👤 Сотрудники</span>
+                    <span class="dict-count" id="employeesCount">0</span>
+                    {% if P.get('action.employee.create') %}<button class="dict-add-btn" id="addEmployeeBtn">➕</button>{% endif %}
+                </div>
+                <div class="dict-list" id="employeesList" style="max-height:80vh;"><div class="dict-empty">Загрузка...</div></div>
+            </div>
+            <div class="dict-section">
+                <div class="dict-section-head">
+                    <span class="dict-section-title">🏢 Отделы</span>
+                    <span class="dict-count" id="departmentsCount">0</span>
+                    {% if P.get('action.department.create') %}<button class="dict-add-btn" id="addDepartmentBtn">➕</button>{% endif %}
+                </div>
+                <div class="dict-list" id="departmentsList" style="max-height:30vh;"><div class="dict-empty">Загрузка...</div></div>
+                <div class="dict-section-head">
+                    <span class="dict-section-title">👥 Команды</span>
+                    <span class="dict-count" id="teamsCount">0</span>
+                    {% if P.get('action.team.create') %}<button class="dict-add-btn" id="addTeamBtn">➕</button>{% endif %}
+                </div>
+                <div class="dict-list" id="teamsList" style="max-height:30vh;"><div class="dict-empty">Загрузка...</div></div>
+                <div class="dict-section">
+                    <div class="dict-section-head">
+                        <span class="dict-section-title">🎉 Праздники</span>
+                    </div>
+                    <div class="dict-list" id="holidaysInlineList" style="max-height:20vh;">
+                        <div class="dict-holidays-grid" id="holidaysGrid"><div class="dict-empty">Загрузка...</div></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        {# PATCH 1.0.10: раздел «Задачи» убран со страницы Справочники — задачи только во вкладке «Задачи» #}
+    </div>
+    {% endif %}
+</div>
+<!-- ================= МОДАЛКИ ================= -->
+<div class="modal" id="employeeModal"><div class="modal-content">
+    <h2 id="employeeModalTitle">Новый сотрудник</h2>
+    <input type="hidden" id="emp_id">
+    <div class="form-group"><label>Имя *</label><input type="text" id="emp_name" maxlength="100"></div>
+    <div class="form-row">
+        <div class="form-group"><label>Цвет</label>
+            <input type="color" id="emp_color" value="#00897b" style="height:38px;padding:2px;">
+            <div class="palette" id="empPalette"></div>
+        </div>
+        <div class="form-group">
+            <label>Должность</label>
+            <input type="text" id="emp_role" maxlength="50" list="emp_role_list"
+                   autocomplete="off" placeholder="Выберите или введите новую">
+            <datalist id="emp_role_list"></datalist>
+        </div>
+    </div>
+    <div class="form-group"><label>🏢 Отдел</label><select id="emp_department_select"><option value="">— не указан —</option></select></div>
+    <div class="form-group"><label>📅 Дата выхода на работу</label><input type="date" id="emp_hired_date"></div>
+    <div class="form-row">
+        <div class="form-group"><label>Уволен</label>
+            <label class="sum-toggle" style="justify-content:flex-start;">
+                <input type="checkbox" id="emp_fired"><span>Указать дату</span>
+            </label>
+        </div>
+        <div class="form-group"><label>Дата увольнения</label><input type="date" id="emp_fired_date"></div>
+    </div>
+    <div class="form-group" id="vacSection" style="display:none;">
+        <label>🏖 Отпуска / Больничные / Командировки</label>
+        <div class="vac-list" id="vacList"></div>
+        <div class="vac-type-row">
+            <select id="vac_type">
+                <option value="vacation">🏖 Отпуск</option>
+                <option value="sick_leave">🤒 Больничный</option>
+                <option value="business_trip">✈️ Командировка</option>
+                <option value="remote">🏠 Удаленка</option>
+            </select>
+        </div>
+        <div class="vac-add-row">
+            <input type="date" id="vac_from"><input type="date" id="vac_to"><button type="button" id="vacAddBtn">➕</button>
+        </div>
+        <input type="text" id="vac_comment" placeholder="Комментарий" maxlength="200"
+               style="margin-top:4px;padding:6px 10px;border:1px solid var(--trk-input-border);border-radius:8px;background:var(--trk-input-bg);color:var(--trk-text);font-size:0.82rem;outline:none;font-family:inherit;">
+    </div>
+    <div class="modal-actions">
+        <button class="btn btn-secondary" data-close="employeeModal">Закрыть</button>
+        <button class="btn btn-primary" id="saveEmployeeBtn">💾 Сохранить</button>
+    </div>
+</div></div>
+<div class="modal" id="departmentModal"><div class="modal-content">
+    <h2 id="departmentModalTitle">Новый отдел</h2>
+    <input type="hidden" id="dep_id">
+    <div class="form-group"><label>Название *</label><input type="text" id="dep_name" maxlength="80"></div>
+    <div class="form-group"><label>Цвет</label><input type="color" id="dep_color" value="#00897b" style="height:38px;padding:2px;width:80px;"></div>
+    <div class="form-group"><label>👤 Начальник отдела</label>
+        <select id="dep_head"><option value="">— не указан —</option></select>
+    </div>
+    <div class="modal-actions">
+        <button class="btn btn-secondary" data-close="departmentModal">Закрыть</button>
+        <button class="btn btn-primary" id="saveDepartmentBtn">💾 Сохранить</button>
+    </div>
+</div></div>
+<div class="modal" id="teamModal"><div class="modal-content">
+    <h2 id="teamModalTitle">Новая команда</h2>
+    <input type="hidden" id="team_id">
+    <div class="form-group"><label>Название *</label><input type="text" id="team_name" maxlength="80"></div>
+    <div class="form-group"><label>🏢 Отдел *</label><select id="team_department"><option value="">— выберите —</option></select></div>
+    <div class="form-group"><label>👤 Руководитель</label><select id="team_manager"><option value="">— не указан —</option></select></div>
+    <div class="form-group"><label>👥 Участники</label>
+        <div class="assignees-list" id="teamMembersList"></div>
+        <div class="assignees-hint" id="teamMembersHint"></div>
+    </div>
+    <div class="modal-actions">
+        <button class="btn btn-secondary" data-close="teamModal">Закрыть</button>
+        <button class="btn btn-primary" id="saveTeamBtn">💾 Сохранить</button>
+    </div>
+</div></div>
+<div class="modal" id="taskModal"><div class="modal-content">
+    <h2 id="taskModalTitle">Новая задача</h2>
+    <input type="hidden" id="task_id">
+    <div class="form-row">
+        <div class="form-group"><label>Иконка</label>
+            <button type="button" class="icon-picker-btn icon-picker-wide" id="taskIconPickBtn" title="Выбрать значок">
+                <span id="taskIconPreview">🚀</span>
+                <span class="icon-picker-hint">выбрать</span>
+            </button>
+            <input type="hidden" id="task_icon" value="🚀">
+        </div>
+        <div class="form-group"><label>Название *</label><input type="text" id="task_name" maxlength="200" autocomplete="off"><div class="task-dup-hint" id="taskDupHint" hidden></div></div>
+    </div>
+    <div class="form-group"><label>Описание</label><textarea id="task_description"></textarea></div>
+    <div class="form-group"><label>📁 Дополнительные данные (по одной записи на строку)</label><textarea id="task_folder" rows="3" maxlength="2000"></textarea></div>
+    <div class="form-group" id="taskOrdersGroup">
+        <label>📄 Приказы / распоряжения</label>
+        <div id="taskOrdersList" class="task-links-list"></div>
+        <button type="button" class="btn btn-secondary" id="taskOrderAddBtn" style="align-self:flex-start;margin-top:6px;padding:6px 14px;font-size:0.82rem;">➕ Добавить распоряжение</button>
+        <div class="assignees-hint">Описание — короткое название. Значение — номер приказа или путь; кликом копируется, для http/https — открывается.</div>
+    </div>
+    <div class="task-urgent-row">
+        <label class="task-urgent-toggle" title="Пометить задачу как очень срочную">
+            <input type="checkbox" id="task_is_urgent">
+            <span class="task-urgent-pill">🚨 Очень срочная</span>
+        </label>
+    </div>
+    <div class="form-row-3">
+        <div class="form-group"><label>Статус</label>
+            <select id="task_status">
+                <option value="active">Активна</option>
+                <option value="done">Выполнена</option>
+                <option value="paused">Приостановлена</option>
+                <option value="archived">Архив</option>
+            </select>
+        </div>
+        <div class="form-group"><label>🚀 Начало</label><input type="date" id="task_start_date"></div>
+        <div class="form-group"><label>⏰ Дедлайн</label><input type="date" id="task_deadline"></div>
+    </div>
+    <div class="form-row">
+        <div class="form-group"><label>🧩 Тип задачи</label>
+            <select id="task_type">
+                <option value="">— не указан —</option>
+                <option value="розничная">Розничная</option>
+                <option value="корпоративная">Корпоративная</option>
+            </select>
+        </div>
+        <div class="form-group"><label>👝 Карман</label>
+            <input type="text" id="task_pocket" list="taskPocketOptions" maxlength="200" autocomplete="off" placeholder="например: Ипотека">
+            <datalist id="taskPocketOptions"></datalist>
+            <div class="assignees-hint">Свободный текст. Подсказки — из уже использованных карманов.</div>
+        </div>
+    </div>
+    <div class="form-group" id="taskStagesGroup">
+        <label>📊 Этапы задачи</label>
+        <div class="task-stages-list" id="taskStagesList"></div>
+        <div class="assignees-hint">Указывается только дата начала этапа. Конец подтягивается автоматически (начало следующего этапа − 1 день); у последнего этапа — дедлайн задачи. Можно задать конец вручную — тогда начало следующего не трогается.</div>
+    </div>
+    <div class="form-group" id="taskLinksGroup">
+        <label>🔗 Ссылки</label>
+        <div id="taskLinksList" class="task-links-list"></div>
+        <button type="button" class="btn btn-secondary" id="taskLinkAddBtn" style="align-self:flex-start;margin-top:6px;padding:6px 14px;font-size:0.82rem;">➕ Добавить ссылку</button>
+        <div class="assignees-hint">Внешние (http/https) открываются в новой вкладке. Локальные пути копируются в буфер по клику.</div>
+    </div>
+    <div class="form-row">
+        <div class="form-group"><label>✅ Админ. завершение</label>
+            <input type="date" id="task_completed_at">
+            <div class="assignees-hint" id="taskCompletionHint"></div>
+        </div>
+        <div class="form-group">
+            <label>🏷️ Теги</label>
+            <div class="tag-pills" id="taskTagsBox">
+                <input type="text" id="task_tags_input" placeholder="Начните вводить и нажмите Enter…" maxlength="40" autocomplete="off">
+            </div>
+            <div class="tag-presets" id="tagPresets">
+                {% for preset in DEFAULT_TAG_PRESETS %}
+                <button type="button" class="tag-preset-btn" data-tag="{{ preset }}">#{{ preset }}</button>
+                {% endfor %}
+            </div>
+            <div class="assignees-hint">Enter — добавить. Backspace — удалить последний.</div>
+        </div>
+    </div>
+    <div class="form-group"><label>🏢 Отделы</label>
+        <div class="dept-multi-list" id="taskDepartmentsList"></div>
+        <div class="assignees-hint" id="taskDepartmentsHint"></div>
+    </div>
+    <div class="form-group"><label>👥 Назначено</label>
+        <div class="assignees-list" id="taskAssigneesList"></div>
+        <div class="assignees-hint" id="taskAssigneesHint"></div>
+    </div>
+    <div class="form-group"><label>👑 Руководитель проверки</label>
+        <div class="lead-row">
+            <div class="lead-col">
+                <div class="lead-sub">Банк-руководитель <span class="lead-req">*</span></div>
+                <select id="task_lead_department" class="lead-select"></select>
+            </div>
+            <div class="lead-col">
+                <div class="lead-sub">Сотрудник (необязательно)</div>
+                <select id="task_lead_employee" class="lead-select"></select>
+            </div>
+        </div>
+        <div class="assignees-hint" id="taskLeadHint">Банк — из выбранных участников. Сотрудник — из этого банка.</div>
+    </div>
+    <div class="modal-actions">
+        <button class="btn btn-secondary" data-close="taskModal">Отмена</button>
+        <button class="btn btn-primary" id="saveTaskBtn">💾 Сохранить</button>
+    </div>
+</div></div>
+<div class="modal" id="emojiModal"><div class="modal-content">
+    <h2>🎨 Выбор значка</h2>
+    <div class="emoji-grid" id="emojiGrid"></div>
+    <div class="modal-actions"><button class="btn btn-secondary" data-close="emojiModal">Закрыть</button></div>
+</div></div>
+<div class="modal" id="dayModal"><div class="modal-content wide">
+    <div class="day-modal-head">
+        <div class="day-modal-date" id="dayModalDate">—</div>
+        <div class="day-modal-total" id="dayModalTotal">0 ч</div>
+        <div class="day-cols-picker" id="dayColsPicker" title="Число колонок">
+            <button type="button" data-cols="1" title="1 колонка">I</button>
+            <button type="button" data-cols="2" title="2 колонки">II</button>
+        </div>
+        <div class="segmented day-view-mode-seg" id="dayViewMode" title="Вид отображения">
+            <button type="button" data-mode="task" class="active" title="По задачам">📋 Задачи</button>
+            <button type="button" data-mode="employee" title="По сотрудникам">👥 Сотрудники</button>
+        </div>
+    </div>
+    <div id="dayMissingBlock" class="day-missing-block" style="display:none;"></div>
+    <div class="day-list" id="dayList"></div>
+    <div class="day-modal-actions">
+        <div class="day-modal-actions-right" id="dayModalLeftActions">
+            {% if P.get('action.log.create') %}<button class="btn btn-primary" id="dayAddBtn">➕ Добавить отметку</button>{% endif %}
+            {% if P.get('action.log.create') %}<button class="btn btn-secondary" id="dayCopyPrevBtn">📎 Как вчера</button>{% endif %}
+            <button class="btn btn-secondary" id="dayTodayBtn">📅 Сегодня</button>
+        </div>
+        <div class="day-modal-actions-right">
+            {% if P.get('action.log.delete.any') %}<button class="btn btn-danger" id="dayClearBtn">🗑 Очистить</button>{% endif %}
+            <button class="btn btn-secondary" data-close="dayModal">Закрыть</button>
+        </div>
+    </div>
+</div></div>
+{# PATCH v2: карточка отметки — 
+   1) содержимое обёрнуто в .log-modal-body (PATCH 1.0.16 ждёт его наличие — 
+      теперь оно есть сразу, без моргания от JS-патча wrapBody);
+   2) кнопка #logNewTaskBtn переименована в #logCreateTaskBtn с классом 
+      .log-create-task-btn — теперь V3-патч её подхватит и она будет работать;
+   3) кнопка вынесена за .log-task-wrap (согласовано с PATCH 49 — 
+      flex-column .trk-ltb-group);
+   4) добавлен #log_task_warn — используется патчами для предупреждений;
+   5) класс .trk-ltb-group — статичная раскладка (PATCH 49 применяет тот же класс). #}
+<div class="modal" id="logModal"><div class="modal-content log-modal-wide">
+    <h2 id="logModalTitle">Новая отметка</h2>
+    <div class="log-modal-body">
+        <input type="hidden" id="log_id">
+        <div id="logDayExisting" style="display:none; margin-bottom:12px;">
+            <div style="font-size:0.75rem;color:var(--trk-meta);text-transform:uppercase;letter-spacing:1px;font-weight:700;margin-bottom:6px;">Уже заведено за этот день</div>
+            <div class="log-existing-tabs" id="logExistingTabs" style="display:none;">
+                <button type="button" class="log-existing-tab active" data-mode="me">Только выбранный сотрудник</button>
+                <button type="button" class="log-existing-tab" data-mode="all">Показать всех</button>
+            </div>
+            <div class="day-list" id="logDayExistingList" style="margin-bottom:0;"></div>
+        </div>
+        <div class="form-row log-row-4">
+            <div class="form-group"><label>📅 Дата *</label><input type="date" id="log_date"></div>
+            <div class="form-group"><label>⏱ Часы</label><input type="number" id="log_hours" min="0" max="24" step="0.25" value="8"></div>
+            <div class="form-group"><label>👤 Сотрудник *</label><select id="log_employee"></select></div>
+            <div class="form-group"><label>📌 Статус</label>
+                <select id="log_status">
+                    <option value="in_progress">🔵 В работе</option>
+                    <option value="done">✅ Готово</option>
+                    <option value="planned">📝 Запланировано</option>
+                    <option value="blocked">🔴 Заблокировано</option>
+                </select>
+            </div>
+        </div>
+        <div id="logDaySummary" class="log-day-summary" style="display:none;"></div>
+        <div class="form-group trk-ltb-group">
+            <label>📋 Задача *</label>
+            <div class="log-task-wrap">
+                <input type="text" id="log_task_input"
+                       placeholder="Начните вводить или выберите из списка…"
+                       autocomplete="new-kody"
+                       spellcheck="false">
+                <input type="hidden" id="log_task">
+            </div>
+            <button type="button" class="log-create-task-btn" id="logCreateTaskBtn" title="Создать новую задачу">➕ Новая задача</button>
+           
+        </div>
+        <div class="form-group log-desc-group">
+            <label>📝 Описание</label>
+            <textarea id="log_comment" placeholder="Что сделано по задаче за день…"></textarea>
+            <input type="hidden" id="log_link" value="">
+        </div>
+        <div class="log-multifields" id="logMultiFields">
+            <div class="form-group">
+                <label>📁 Дополнительные данные</label>
+                <div id="logExtraDataList" class="task-links-list"></div>
+                <button type="button" class="btn btn-secondary log-add-btn" id="logExtraAddBtn">➕ Добавить</button>
+                <div class="assignees-hint">Строки добавятся в карточку задачи как «Дополнительные данные»</div>
+            </div>
+            <div class="form-group">
+                <label>📄 Приказы / распоряжения</label>
+                <div id="logOrdersList" class="task-links-list"></div>
+                <button type="button" class="btn btn-secondary log-add-btn" id="logOrderAddBtn">➕ Добавить</button>
+                <div class="assignees-hint">Описание — короткое название, значение — номер приказа / путь</div>
+            </div>
+            <div class="form-group">
+                <label>🔗 Ссылки</label>
+                <div id="logLinksList" class="task-links-list"></div>
+                <button type="button" class="btn btn-secondary log-add-btn" id="logLinkAddBtn">➕ Добавить</button>
+                <div class="assignees-hint">http/https — откроются, локальный путь — скопируется</div>
+            </div>
+        </div>
+        <div class="log-multifields-ro" id="logMultiFieldsRO" style="display:none;" aria-hidden="true"></div>
+    </div>
+    <div class="modal-actions">
+        <button class="btn btn-secondary" data-close="logModal">Закрыть</button>
+        <button class="btn btn-primary" id="saveLogBtn">💾 Сохранить</button>
+    </div>
+</div></div>
+<div class="modal" id="empCardModal"><div class="modal-content wide">
+    <div class="emp-day-head" id="empCardHead"></div>
+    <div id="empCardHeatmap" class="mini-heatmap"></div>
+    <div id="empCardTasks" style="margin-top:14px;" class="scroll-block"></div>
+    <div class="modal-actions"><button class="btn btn-secondary" data-close="empCardModal">Закрыть</button></div>
+</div></div>
+<div class="modal" id="taskCardModal"><div class="modal-content wide">
+    <div class="emp-day-head" id="taskCardHead"></div>
+    <div id="taskCardHeatmap" class="mini-heatmap"></div>
+    <div id="taskCardEmployees" class="day-list scroll-block" style="margin-top:14px;"></div>
+    <div class="modal-actions"><button class="btn btn-secondary" data-close="taskCardModal">Закрыть</button></div>
+</div></div>
+<div class="modal" id="copyDayEmpModal"><div class="modal-content">
+    <h2>За кого скопировать день?</h2>
+    <div class="form-group">
+        <label>Сотрудник *</label>
+        <select id="copyDayEmpSelect"></select>
+    </div>
+    <div class="modal-actions">
+        <button class="btn btn-secondary" data-close="copyDayEmpModal">Отмена</button>
+        <button class="btn btn-primary" id="copyDayEmpConfirm">📎 Скопировать</button>
+    </div>
+</div></div>
+<div class="modal" id="absenceInfoModal"><div class="modal-content">
+    <h2>📋 Информация об отсутствии</h2>
+    <div id="absenceInfoBody"></div>
+    <div class="modal-actions"><button class="btn btn-secondary" data-close="absenceInfoModal">Закрыть</button></div>
+</div></div>
+<div class="modal" id="empDayModal"><div class="modal-content wide">
+    <div class="emp-day-head" id="empDayHead"></div>
+    <div class="day-list" id="empDayList"></div>
+    <div class="modal-actions"><button class="btn btn-secondary" data-close="empDayModal">Закрыть</button></div>
+</div></div>
+<div id="globalLoader">
+    <div class="gl-box">
+        <div class="gl-spinner"></div>
+        <div class="gl-text">Загрузка…</div>
+    </div>
+</div>
+<div class="tracker-notification" id="trackerNotif"></div>
+{% endblock %}
+{% block scripts %}
+<script>window.REESTR_PERMS = {{ perms|tojson }};</script>
+<script src="{{ url_for('static', filename='tracker.js') }}?v={{ static_version }}"></script>
+<script src="/plugins-assets/updater.js"></script>
+<script src="/plugins-assets/task_audit.js"></script>
+<script src="/plugins-assets/my_week.js"></script>
+<script src="/plugins-assets/pulse.js"></script>
+<script src="/plugins-assets/gantt.js"></script>
+<script src="/plugins-assets/capacity.js"></script>
+<script src="/plugins-assets/stats_teams.js"></script>
+<script src="/plugins-assets/week_achievements.js"></script>
+<script src="/plugins-assets/excel_export.js"></script>
+<script src="/plugins-assets/reminders.js"></script>
+{% endblock %}

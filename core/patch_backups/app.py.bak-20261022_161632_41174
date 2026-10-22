@@ -1,0 +1,4505 @@
+"""Standalone-приложение трекера задач. Flask + SQLite + пользователи + аудит + плагины."""
+import json
+import secrets
+import mimetypes as _mimetypes
+import traceback
+from pathlib import Path
+from datetime import datetime, date, timedelta
+from calendar import monthrange
+
+# Windows-registry может отдавать .js как text/plain — браузер отказывается исполнять
+# (Chrome: 'Refused to execute script ... MIME type text/plain is not executable')
+_mimetypes.add_type('application/javascript', '.js')
+_mimetypes.add_type('application/javascript', '.mjs')
+_mimetypes.add_type('text/css', '.css')
+_mimetypes.add_type('image/svg+xml', '.svg')
+
+from flask import (Flask, render_template, request, jsonify, session,
+                   redirect, url_for, g)
+
+from db import TrackerDB
+from auth import (PERMISSION_GROUPS, ALL_PERMISSIONS, DEFAULT_USER_PERMISSIONS,
+                  user_has, effective_permissions,
+                  hash_kody, verify_kody,
+                  login_user, logout_user, current_user, ensure_csrf, check_csrf,
+                  login_required, permission_required)
+from plugins_loader import load_plugins, HookRegistry
+
+
+BASE_DIR = Path(__file__).parent
+# === build v1.0.4 ===
+CONFIG_PATH = BASE_DIR / 'config.json'
+
+STATUS_LABELS = {
+    'planned':     '📝 Запланировано',
+    'in_progress': '🔵 В работе',
+    'done':        '✅ Готово',
+    'blocked':     '🔴 Заблокировано',
+}
+TASK_STATUS_LABELS = {
+    'active':   'Активна',
+    'done':     'Выполнена',
+    'paused':   'Приостановлена',
+    'archived': 'Архив',
+}
+ABSENCE_TYPES = {
+    'vacation':      '🏖 Отпуск',
+    'sick_leave':    '🤒 Больничный',
+    'business_trip': '✈️ Командировка',
+    'remote':        '🏠 Удаленка',
+}
+WORK_WEEKDAYS = {0, 1, 2, 3, 4}
+EXEMPT_ROLES_MARKERS = ('начальник отдела', 'head of department', 'руководитель отдела')
+
+EMOJI_LIST = list('🚀📋💼📊📈🎯🔧⚙️💡🔍📝✏️📁📂🗂️📌📍🔖🏷️📎🔗📅📆⏰⌛⏳👥👤🤝💬📞📧✉️📨📩📤📥📦💻🖥️⌨️💾📱☎️🖨️🧪🧬🔬🎨🎬📷📺🎵🎧🎤🏆🏅🎖️🎁🎉✨⭐🌟💫⚡🔥💥❄️☀️⚠️❗❓✅❌➕➖✔️🔄🔁🟢🟡🔴🔵🟣⚫⚪')
+PALETTE = ['#f5d76e', '#f39c12', '#e74c3c', '#e91e63', '#9b59b6', '#673ab7',
+           '#3f51b5', '#2196f3', '#00bcd4', '#009688', '#4caf50', '#8bc34a',
+           '#ff5722', '#795548', '#607d8b', '#34495e', '#7a9ab5', '#2ecc71']
+
+DEFAULT_TAG_PRESETS = ['one-time', 'pereodic', 'dopoln']
+
+_RU_HOLIDAYS = [
+    ('01-01', 'Новый год'), ('01-02', 'Новогодние каникулы'),
+    ('01-03', 'Новогодние каникулы'), ('01-04', 'Новогодние каникулы'),
+    ('01-05', 'Новогодние каникулы'), ('01-06', 'Новогодние каникулы'),
+    ('01-07', 'Рождество Христово'), ('01-08', 'Новогодние каникулы'),
+    ('02-23', 'День защитника Отечества'), ('03-08', 'Международный женский день'),
+    ('05-01', 'Праздник Весны и Труда'), ('05-09', 'День Победы'),
+    ('06-12', 'День России'), ('11-04', 'День народного единства'),
+]
+
+_TRANSLIT = {
+    'а': 'a', 'б': 'b', 'в': 'v', 'г': 'g', 'д': 'd', 'е': 'e', 'ё': 'e',
+    'ж': 'zh', 'з': 'z', 'и': 'i', 'й': 'y', 'к': 'k', 'л': 'l', 'м': 'm',
+    'н': 'n', 'о': 'o', 'п': 'p', 'р': 'r', 'с': 's', 'т': 't', 'у': 'u',
+    'ф': 'f', 'х': 'h', 'ц': 'ts', 'ч': 'ch', 'ш': 'sh', 'щ': 'sch',
+    'ъ': '', 'ы': 'y', 'ь': '', 'э': 'e', 'ю': 'yu', 'я': 'ya',
+}
+
+
+def _translit_username(name):
+    out = []
+    for ch in str(name or '').strip().lower():
+        if ch.isascii() and ch.isalnum():
+            out.append(ch)
+        elif ch in _TRANSLIT:
+            out.append(_TRANSLIT[ch])
+        elif ch in (' ', '-', '_', '.'):
+            out.append('_')
+    s = ''.join(out).strip('_')
+    return (s or 'user')[:32]
+
+
+def _valid_date(s):
+    try:
+        datetime.strptime(str(s), '%Y-%m-%d')
+        return True
+    except Exception:
+        return False
+
+
+def _parse_ym(ym):
+    try:
+        y, m = ym.split('-')
+        return int(y), int(m)
+    except Exception:
+        t = date.today()
+        return t.year, t.month
+
+
+def _slugify(name):
+    s = str(name or '').strip().lower()
+    out = []
+    for ch in s:
+        if ch.isascii() and ch.isalnum():
+            out.append(ch)
+        elif ch in (' ', '-', '_', '.'):
+            out.append('_')
+    return (''.join(out).strip('_') or 'item')[:40]
+
+
+def _in_vacation(emp, dk):
+    if not emp:
+        return False
+    for v in emp.get('vacations', []) or []:
+        if v.get('type') == 'remote':
+            continue
+        f, t = v.get('from', ''), v.get('to', '')
+        if f and t and f <= dk <= t:
+            return True
+    return False
+
+
+def _is_remote(emp, dk):
+    if not emp:
+        return False
+    for v in emp.get('vacations', []) or []:
+        if v.get('type') != 'remote':
+            continue
+        f, t = v.get('from', ''), v.get('to', '')
+        if f and t and f <= dk <= t:
+            return True
+    return False
+
+
+def _absence_type(emp, dk):
+    if not emp:
+        return ''
+    for v in emp.get('vacations', []) or []:
+        f, t = v.get('from', ''), v.get('to', '')
+        if f and t and f <= dk <= t:
+            return v.get('type', 'vacation') or 'vacation'
+    return ''
+
+
+def _is_active_on(emp, dk):
+    if not emp:
+        return False
+    # PATCH v1.0.3: учитываем дату выхода на работу — до неё сотрудник неактивен
+    hired = (emp.get('hired_date') or '').strip()
+    if hired and dk < hired:
+        return False
+    if emp.get('fired') and emp.get('fired_date'):
+        return dk < emp['fired_date']
+    return True
+
+
+def _is_dept_head(emp):
+    if not emp:
+        return False
+    role = (emp.get('role') or '').strip().lower()
+    if not role:
+        return False
+    return any(m in role for m in EXEMPT_ROLES_MARKERS)
+
+
+def _is_overdue(task, today):
+    if not task:
+        return False
+    dl = task.get('deadline', '')
+    st = task.get('status', 'active')
+    return bool(dl) and dl < today and st not in ('done', 'archived')
+
+
+def _completion_kind(task):
+    if not task:
+        return ''
+    if task.get('status') not in ('done', 'archived'):
+        return ''
+    ca = (task.get('completed_at') or '')[:10]
+    dl = task.get('deadline') or ''
+    if not ca or not dl:
+        return ''
+    return 'early' if ca < dl else ('late' if ca > dl else 'on_time')
+
+
+# Кэш: id(list) -> { (emp_id,task_id): 'YYYY-MM-DD' }
+_LAST_DONE_CACHE = {}
+
+
+def _last_done_map(logs):
+    """Один проход по logs -> dict {(emp_id,task_id): max_date}.
+    Кэш по id() списка: в рамках одного запроса data['log'] — один и тот же объект."""
+    key = id(logs)
+    hit = _LAST_DONE_CACHE.get(key)
+    if hit is not None and hit[0] is logs:
+        return hit[1]
+    m = {}
+    for l in logs:
+        if l.get('status') != 'done':
+            continue
+        eid = l.get('employee_id')
+        tid = l.get('task_id')
+        d = l.get('date') or ''
+        if not eid or not tid or not d:
+            continue
+        k = (eid, tid)
+        prev = m.get(k)
+        if prev is None or d > prev:
+            m[k] = d
+    if len(_LAST_DONE_CACHE) > 8:
+        _LAST_DONE_CACHE.clear()
+    _LAST_DONE_CACHE[key] = (logs, m)
+    return m
+
+
+def _emp_last_done_date(logs, emp_id, task_id):
+    return _last_done_map(logs).get((emp_id, task_id), '')
+
+
+def _emp_closed_task(logs, emp_id, task_id):
+    return bool(_emp_last_done_date(logs, emp_id, task_id))
+
+
+def _emp_completion_kind(task, logs, emp_id):
+    if not task:
+        return ''
+    ca = _emp_last_done_date(logs, emp_id, task['id'])
+    dl = task.get('deadline') or ''
+    if not ca or not dl:
+        return ''
+    return 'early' if ca < dl else ('late' if ca > dl else 'on_time')
+
+
+def _emp_days_delta(task, logs, emp_id):
+    if not task:
+        return None
+    ca = _emp_last_done_date(logs, emp_id, task['id'])
+    dl = task.get('deadline') or ''
+    if not ca or not dl:
+        return None
+    try:
+        return (datetime.strptime(ca, '%Y-%m-%d').date()
+                - datetime.strptime(dl, '%Y-%m-%d').date()).days
+    except Exception:
+        return None
+
+
+def _emp_is_overdue(task, logs, emp_id, today):
+    if not task:
+        return False
+    st = task.get('status', 'active')
+    if st in ('archived', 'done'):
+        return False
+    dl = task.get('deadline') or ''
+    if not dl or dl >= today:
+        return False
+    if _emp_closed_task(logs, emp_id, task['id']):
+        return False
+    return True
+
+
+def _emp_done_task(task, logs, emp_id):
+    if not task:
+        return False
+    if task.get('status') in ('done', 'archived'):
+        return True
+    return _emp_closed_task(logs, emp_id, task['id'])
+
+
+def _task_matches_dept(task, dept_id, dept_emp_ids):
+    if not dept_id:
+        return True
+    if dept_id in (task.get('department_ids') or []):
+        return True
+    if not task.get('department_ids'):
+        for a in task.get('assignees', []) or []:
+            if a in dept_emp_ids:
+                return True
+    return False
+
+
+def _task_in_period(task, date_from, date_to, today):
+    if not task:
+        return False
+    if _is_overdue(task, today):
+        return True
+    start = task.get('start_date') or '1900-01-01'
+    end = task.get('deadline') or today
+    if not _valid_date(start):
+        start = '1900-01-01'
+    if not _valid_date(end):
+        end = today
+    return (start <= date_to) and (end >= date_from)
+
+
+def _calc_coverage(task, emp, logs, today_d):
+    if not task:
+        return 0, 0, 0
+    ts = None
+    for src in (task.get('start_date'), (task.get('created_at') or '')[:10]):
+        if src and _valid_date(src):
+            try:
+                ts = datetime.strptime(src, '%Y-%m-%d').date()
+                break
+            except Exception:
+                pass
+    if ts is None:
+        ts = today_d
+    te = None
+    if task.get('deadline') and _valid_date(task['deadline']):
+        try:
+            te = datetime.strptime(task['deadline'], '%Y-%m-%d').date()
+        except Exception:
+            te = None
+    if te is None:
+        te = today_d
+    if te > today_d:
+        te = today_d
+    if emp and emp.get('fired') and emp.get('fired_date') and _valid_date(emp['fired_date']):
+        fd = datetime.strptime(emp['fired_date'], '%Y-%m-%d').date()
+        if fd < te:
+            te = fd
+    if ts > te:
+        return 0, 0, 0
+    active_dates = set()
+    for l in logs:
+        dk = l.get('date', '')
+        try:
+            h = float(l.get('hours', 0) or 0)
+        except Exception:
+            h = 0
+        if h > 0 and _valid_date(dk):
+            active_dates.add(dk)
+    possible = 0
+    cur = ts
+    while cur <= te:
+        if cur.weekday() in WORK_WEEKDAYS:
+            dk = cur.strftime('%Y-%m-%d')
+            if (emp is None or not _in_vacation(emp, dk)) and \
+               (emp is None or _is_active_on(emp, dk)):
+                possible += 1
+        cur += timedelta(days=1)
+    cov = round(100 * len(active_dates) / possible) if possible else 0
+    return len(active_dates), possible, cov
+
+
+def _day_meta(all_days, holidays_map, today):
+    out = {}
+    for dk in all_days:
+        try:
+            wd = datetime.strptime(dk, '%Y-%m-%d').weekday()
+        except Exception:
+            wd = 0
+        is_wknd = wd >= 5
+        is_hol = dk in holidays_map
+        out[dk] = {
+            'date': dk, 'weekday': wd,
+            'is_weekend': is_wknd, 'is_holiday': bool(is_hol),
+            'holiday_name': holidays_map.get(dk, ''),
+            'is_today': dk == today,
+            'is_workday': not (is_wknd or is_hol),
+        }
+    return out
+
+
+def _team_filter_emp_ids(data, team_id):
+    if not team_id:
+        return None
+    tm = next((x for x in (data.get('teams') or []) if x.get('id') == team_id), None)
+    if tm is None:
+        return set()
+    s = set()
+    if tm.get('manager_id'):
+        s.add(tm['manager_id'])
+    for m in tm.get('member_ids') or []:
+        if m:
+            s.add(m)
+    return s
+
+
+def _actor_is_manager_of(db, actor_user, employee_id):
+    """True если actor — manager команды сотрудника, head его отдела или admin."""
+    if not actor_user or not employee_id:
+        return False
+    if (actor_user.get('role') or '') == 'admin':
+        return True
+    actor_eid = (actor_user.get('employee_id') or '').strip()
+    if not actor_eid:
+        return False
+    try:
+        emp = db.query_one('SELECT department_id FROM employees WHERE id=?', (employee_id,))
+        dept_id = (emp or {}).get('department_id') or ''
+        if dept_id:
+            dept = db.query_one('SELECT head_employee_id FROM departments WHERE id=?', (dept_id,))
+            if ((dept or {}).get('head_employee_id') or '') == actor_eid:
+                return True
+        for r in db.query('SELECT id, manager_id FROM teams'):
+            mgr = (r.get('manager_id') or '').strip()
+            if mgr != actor_eid:
+                continue
+            if mgr == employee_id:
+                return True
+            m = db.query_one(
+                'SELECT 1 FROM team_members WHERE team_id=? AND employee_id=? LIMIT 1',
+                (r['id'], employee_id),
+            )
+            if m:
+                return True
+    except Exception as e:
+        print(f'[notify] actor_is_manager failed: {e}')
+    return False
+
+
+def _find_notification_recipients(db, employee_id, exclude_user_id=None, actor_user=None, event_kind='task_done'):
+    """Вертикаль вверх: manager команды + head отдела.
+    Admin — только fallback, если вертикали нет."""
+    recipients = set()
+    vertical = set()
+    try:
+        actor_eid = ((actor_user or {}).get('employee_id') or '').strip()
+        actor_is_admin = ((actor_user or {}).get('role') or '') == 'admin'
+        emp = db.query_one('SELECT department_id FROM employees WHERE id=?', (employee_id,))
+        dept_id = (emp or {}).get('department_id') or ''
+        head_eid = ''
+        if dept_id:
+            dept = db.query_one('SELECT head_employee_id FROM departments WHERE id=?', (dept_id,))
+            head_eid = (dept or {}).get('head_employee_id') or ''
+            if head_eid and head_eid != actor_eid:
+                hu = db.query_one('SELECT id FROM users WHERE employee_id=? AND is_active=1', (head_eid,))
+                if hu:
+                    vertical.add(hu['id'])
+        for r in db.query('SELECT id, manager_id FROM teams'):
+            mgr = (r.get('manager_id') or '').strip()
+            if not mgr or mgr == actor_eid:
+                continue
+            is_member = False
+            if mgr == employee_id:
+                is_member = True
+            else:
+                m = db.query_one(
+                    'SELECT 1 FROM team_members WHERE team_id=? AND employee_id=? LIMIT 1',
+                    (r['id'], employee_id),
+                )
+                is_member = bool(m)
+            if not is_member:
+                continue
+            mu = db.query_one('SELECT id FROM users WHERE employee_id=? AND is_active=1', (mgr,))
+            if mu:
+                vertical.add(mu['id'])
+        actor_is_boss = _actor_is_manager_of(db, actor_user, employee_id) if actor_user else False
+        if actor_is_boss:
+            recipients |= vertical
+            if actor_is_admin or (actor_eid and actor_eid == head_eid):
+                for u in db.query("SELECT id FROM users WHERE role='admin' AND is_active=1"):
+                    recipients.add(u['id'])
+        else:
+            recipients |= vertical
+            if not recipients:
+                for u in db.query("SELECT id FROM users WHERE role='admin' AND is_active=1"):
+                    recipients.add(u['id'])
+    except Exception as e:
+        print(f'[notify] recipients failed: {e}')
+    if exclude_user_id is not None:
+        recipients.discard(exclude_user_id)
+    return list(recipients)
+
+
+def _notif_dedup(db, kind, task_id, employee_id, hours=24):
+    try:
+        row = db.query_one(
+            'SELECT id FROM notifications WHERE kind=? AND task_id=? AND employee_id=? '
+            "AND ts >= datetime('now', ?) ORDER BY id DESC LIMIT 1",
+            (kind, task_id or '', employee_id or '', f'-{int(hours)} hours'),
+        )
+        return bool(row)
+    except Exception:
+        return False
+
+
+def _notify_task_done(db, task_id, employee_id, from_user):
+    try:
+        from_uid = (from_user or {}).get('id')
+        is_boss = _actor_is_manager_of(db, from_user, employee_id)
+        recipients = _find_notification_recipients(
+            db, employee_id, exclude_user_id=from_uid,
+            actor_user=from_user, event_kind='task_done',
+        )
+        if not recipients:
+            return
+        if _notif_dedup(db, 'task_done', task_id, employee_id):
+            return
+        emp = db.query_one('SELECT name FROM employees WHERE id=?', (employee_id,))
+        emp_name = (emp or {}).get('name', employee_id)
+        t = db.query_one('SELECT name, icon FROM tasks WHERE id=?', (task_id,))
+        task_name = (t or {}).get('name', task_id)
+        task_icon = (t or {}).get('icon', '📋')
+        if is_boss:
+            msg = f'{task_icon} {emp_name}: задача закрыта руководителем — {task_name}'
+        else:
+            msg = f'{task_icon} {emp_name} закрыл задачу: {task_name}'
+        now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        init_status = 'info' if is_boss else 'new'
+        with db.transaction() as tx:
+            for uid in recipients:
+                tx.exec(
+                    'INSERT INTO notifications (ts, to_user_id, from_user_id, from_username, kind, task_id, employee_id, message, status) '
+                    'VALUES (?,?,?,?,?,?,?,?,?)',
+                    (now, uid, from_uid, (from_user or {}).get('username', ''),
+                     'task_done', task_id, employee_id, msg, init_status),
+                )
+    except Exception as e:
+        print(f'[notify] task_done failed: {e}')
+
+
+def _notify_task_created(db, task_id, from_user):
+    """Уведомление по вертикали о создании задачи (без confirm)."""
+    try:
+        from_uid = (from_user or {}).get('id')
+        actor_eid = (from_user or {}).get('employee_id') or ''
+        t = db.query_one('SELECT name, icon FROM tasks WHERE id=?', (task_id,))
+        if not t:
+            return
+        assignees = []
+        try:
+            for r in db.query('SELECT employee_id FROM task_assignees WHERE task_id=?', (task_id,)):
+                if r.get('employee_id'):
+                    assignees.append(r['employee_id'])
+        except Exception:
+            pass
+        anchor_eid = actor_eid or (assignees[0] if assignees else '')
+        if not anchor_eid:
+            recipients = set()
+            for u in db.query("SELECT id FROM users WHERE role='admin' AND is_active=1"):
+                recipients.add(u['id'])
+            if from_uid is not None:
+                recipients.discard(from_uid)
+        else:
+            recipients = set(_find_notification_recipients(
+                db, anchor_eid, exclude_user_id=from_uid,
+                actor_user=from_user, event_kind='task_created',
+            ))
+        if not recipients:
+            return
+        if _notif_dedup(db, 'task_created', task_id, anchor_eid or ''):
+            return
+        who = (from_user or {}).get('display_name') or (from_user or {}).get('username') or 'пользователь'
+        if actor_eid:
+            emp = db.query_one('SELECT name FROM employees WHERE id=?', (actor_eid,))
+            if emp and emp.get('name'):
+                who = emp['name']
+        task_name = t.get('name', task_id)
+        task_icon = t.get('icon', '📋')
+        msg = f'{task_icon} {who} создал задачу: {task_name}'
+        now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        with db.transaction() as tx:
+            for uid in recipients:
+                tx.exec(
+                    'INSERT INTO notifications (ts, to_user_id, from_user_id, from_username, kind, task_id, employee_id, message, status) '
+                    'VALUES (?,?,?,?,?,?,?,?,?)',
+                    (now, uid, from_uid, (from_user or {}).get('username', ''),
+                     'task_created', task_id, anchor_eid or '', msg, 'info'),
+                )
+    except Exception as e:
+        print(f'[notify] task_created failed: {e}')
+
+
+def _audit(db, user, kind, entity='', entity_id='', details=None):
+    try:
+        db.exec(
+            'INSERT INTO audit_log (ts, user_id, username, kind, entity, entity_id, details) '
+            'VALUES (?,?,?,?,?,?,?)',
+            (datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+             (user or {}).get('id'),
+             (user or {}).get('username', ''),
+             kind, entity, str(entity_id or ''),
+             json.dumps(details or {}, ensure_ascii=False)[:2000]),
+        )
+    except Exception as e:
+        print(f'[audit] failed: {e}')
+
+
+# ============================================================
+# PATCH v1.0.4 — хелперы merge «отметка → задача»
+# ============================================================
+def _normalize_url(u):
+    """Нормализация URL/пути для сравнения дубликатов:
+    strip, lower, убрать trailing slash."""
+    s = str(u or '').strip().lower()
+    while len(s) > 1 and s.endswith('/'):
+        s = s[:-1]
+    return s
+
+
+def _normalize_line(s):
+    """Нормализация строки описания для сравнения дублей:
+    strip, lower, ё→е, схлопывание пробелов."""
+    x = str(s or '').strip().lower().replace('ё', 'е')
+    x = ' '.join(x.split())
+    return x
+
+
+def _split_lines(s):
+    """Разбить строку на непустые строки, strip'нутые, в исходном регистре."""
+    return [ln.strip() for ln in str(s or '').split('\n') if ln.strip()]
+
+
+def _merge_description_lines(existing_text, new_text):
+    """Построчный merge описания.
+
+    Из existing_text сохраняем все строки и их порядок.
+    Из new_text добавляем только те строки, которых нет в existing (по нормализованному виду).
+    Возвращает (итоговый текст, сколько строк добавлено)."""
+    existing_lines = _split_lines(existing_text)
+    new_lines = _split_lines(new_text)
+    seen = set(_normalize_line(ln) for ln in existing_lines)
+    added = 0
+    for ln in new_lines:
+        nk = _normalize_line(ln)
+        if not nk or nk in seen:
+            continue
+        existing_lines.append(ln)
+        seen.add(nk)
+        added += 1
+    return ('\n'.join(existing_lines), added)
+
+
+def _parse_json_list(s):
+    try:
+        v = json.loads(s or '[]')
+        return v if isinstance(v, list) else []
+    except Exception:
+        return []
+
+
+def _merge_log_data_into_task(db, task_id, employee_id, user,
+                              description, extra_data, orders, links):
+    """PATCH 1.0.28: description → tasks.description (merge построчно).
+    extra/orders/links → соответствующие поля задачи. Лог действий → в начало folder.
+    Использует chr(10) вместо 
+ для избежания проблем с экранированием."""
+    _NL = chr(10)
+    now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    added_by = (user or {}).get('display_name') or (user or {}).get('username') or ''
+    result = {
+        'added_description': False,
+        'description_lines_added': 0,
+        'extra_added': 0, 'extra_skipped': 0,
+        'orders_added': 0, 'orders_skipped': 0,
+        'links_added': 0, 'links_skipped': 0,
+        'total_added': 0,
+    }
+    pass  # PATCH 1.0.34: debug-print убран
+    t = db.query_one('SELECT * FROM tasks WHERE id=?', (task_id,))
+    if not t:
+        return result
+
+    cur_orders = _parse_json_list(t.get('orders_json') or '[]')
+    cur_links = _parse_json_list(t.get('links_json') or '[]')
+    cur_extra_meta = _parse_json_list(t.get('extra_meta') or '[]')
+    cur_folder = (t.get('folder') or '')
+    cur_description = (t.get('description') or '')
+
+    new_desc = (description or '').strip()
+    if new_desc:
+        _merged_desc, _added_n = _merge_description_lines(cur_description, new_desc)
+        if _added_n > 0:
+            cur_description = _merged_desc
+            result['added_description'] = True
+            result['description_lines_added'] = _added_n
+
+    folder_lines = [ln.strip() for ln in cur_folder.split(_NL) if ln.strip()]
+    seen_norm = set(_normalize_url(x) for x in folder_lines)
+    for line in (extra_data or []):
+        line = str(line or '').strip()
+        if not line:
+            continue
+        norm = _normalize_url(line)
+        if norm in seen_norm:
+            result['extra_skipped'] += 1
+            continue
+        folder_lines.append(line)
+        cur_extra_meta.append({'line': line, 'added_by': added_by, 'added_at': now})
+        seen_norm.add(norm)
+        result['extra_added'] += 1
+
+    seen_ord = set(_normalize_url(o.get('value') or '') for o in cur_orders if isinstance(o, dict))
+    for o in (orders or []):
+        if not isinstance(o, dict):
+            continue
+        val = str(o.get('value') or '').strip()
+        if not val:
+            continue
+        norm = _normalize_url(val)
+        if norm in seen_ord:
+            result['orders_skipped'] += 1
+            continue
+        cur_orders.append({
+            'description': str(o.get('description') or '').strip()[:200],
+            'value': val[:1000],
+            'added_by': added_by, 'added_at': now, 'source': 'log',
+        })
+        seen_ord.add(norm)
+        result['orders_added'] += 1
+
+    seen_lnk = set(_normalize_url(l.get('url') or '') for l in cur_links if isinstance(l, dict))
+    for l in (links or []):
+        if not isinstance(l, dict):
+            continue
+        url = str(l.get('url') or '').strip()
+        if not url:
+            continue
+        norm = _normalize_url(url)
+        if norm in seen_lnk:
+            result['links_skipped'] += 1
+            continue
+        cur_links.append({
+            'description': str(l.get('description') or '').strip()[:200],
+            'url': url[:1000],
+            'added_by': added_by, 'added_at': now, 'source': 'log',
+        })
+        seen_lnk.add(norm)
+        result['links_added'] += 1
+
+    result['total_added'] = (
+        result['extra_added'] + result['orders_added'] + result['links_added']
+        + (1 if result['added_description'] else 0)
+    )
+
+    if result['total_added'] > 0:
+        _who = added_by or 'user'
+        _parts = []
+        if result['added_description']:
+            _n_d = result['description_lines_added']
+            _parts.append(f'✏️ описание +{_n_d} стр.' if _n_d > 1 else '✏️ описание')
+        if result['extra_added']:
+            _parts.append(f"📁 доп. данные +{result['extra_added']}")
+        if result['orders_added']:
+            _parts.append(f"📄 приказы +{result['orders_added']}")
+        if result['links_added']:
+            _parts.append(f"🔗 ссылки +{result['links_added']}")
+        _marker = f'🔄 {now[:16]} · {_who} · ' + ' · '.join(_parts)
+        folder_lines.insert(0, _marker)
+
+    if result['total_added'] == 0:
+        return result
+
+    new_folder = _NL.join(folder_lines)[:4000]
+    db.exec(
+        'UPDATE tasks SET description=?, folder=?, orders_json=?, links_json=?, extra_meta=?, updated_at=? WHERE id=?',
+        (
+            cur_description[:8000],
+            new_folder,
+            json.dumps(cur_orders, ensure_ascii=False),
+            json.dumps(cur_links, ensure_ascii=False),
+            json.dumps(cur_extra_meta, ensure_ascii=False),
+            now, task_id,
+        )
+    )
+    return result
+
+
+
+def _data(db, since=None):
+    """Без кэша: каждая операция читает актуальные данные.
+    Убирает класс проблем с мутацией общего кэша (теги, фильтры).
+    since — опционально: 'YYYY-MM-DD' для фильтрации логов."""
+    if since:
+        return db.load_all(since=since)
+    return db.load_all()
+
+
+def _all_assignees_closed(db, task_id):
+    """Возвращает (all_closed: bool, assignees: list).
+    all_closed=True только если есть исполнители и все они последней
+    отметкой закрыли задачу (status='done')."""
+    try:
+        assignees = [r.get('employee_id') or '' for r in db.query(
+            'SELECT employee_id FROM task_assignees WHERE task_id=?', (task_id,))]
+        assignees = [a for a in assignees if a]
+        if not assignees:
+            return False, []
+        last_map = {}
+        for l in db.query(
+            'SELECT id, employee_id, status, date FROM work_logs WHERE task_id=? ORDER BY date, id',
+            (task_id,),
+        ):
+            eid = l.get('employee_id') or ''
+            if not eid:
+                continue
+            cur = last_map.get(eid)
+            if not cur or (l.get('date') or '', l.get('id') or 0) > (cur.get('date') or '', cur.get('id') or 0):
+                last_map[eid] = l
+        for eid in assignees:
+            rec = last_map.get(eid)
+            if not rec or (rec.get('status') or '') != 'done':
+                return False, assignees
+        return True, assignees
+    except Exception as e:
+        print(f'[all_assignees_closed] failed for {task_id}: {e}')
+        return False, []
+
+
+def _try_reopen_if_stale_autoclose(db, task_id, u=None):
+    """Если задача была закрыта автозакрытием (auto_closed_at непустой),
+    а сейчас кто-то из исполнителей уже не в 'done' — вернуть задачу в 'active'
+    и снять метку авто. Ручные закрытия (auto_closed_at пустой) не трогаем.
+    Возвращает True если задача была раз-закрыта."""
+    try:
+        t = db.query_one('SELECT id, status, auto_closed_at FROM tasks WHERE id=?', (task_id,))
+        if not t:
+            return False
+        if (t.get('status') or '') != 'done':
+            return False
+        if not (t.get('auto_closed_at') or '').strip():
+            return False  # закрыто вручную — не наш случай
+        ok, assignees = _all_assignees_closed(db, task_id)
+        if ok:
+            return False  # всё ещё все закрыты
+        db.exec(
+            "UPDATE tasks SET status='active', completed_at='', auto_closed_at='' WHERE id=?",
+            (task_id,),
+        )
+        try:
+            with db.transaction() as tx:
+                tx.exec(
+                    'INSERT INTO audit_log (ts, user_id, username, kind, entity, entity_id, details) VALUES (?,?,?,?,?,?,?)',
+                    (datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                     (u or {}).get('id'), 'system:autoclose',
+                     'update', 'task', str(task_id),
+                     json.dumps({'action': 'auto_reopen',
+                                 'reason': 'assignee_rolled_back',
+                                 'assignees': assignees}, ensure_ascii=False)),
+                )
+        except Exception as _e:
+            print(f'[autoclose] audit failed: {_e}')
+        print(f'[autoclose] task {task_id} -> active (автозакрытие отменено)')
+        return True
+    except Exception as e:
+        print(f'[autoclose] reopen failed for {task_id}: {e}')
+        return False
+
+def _autoclose_if_all_done(db, task_id, u=None):
+    """Если все назначенные закрыли задачу — перевести её в done.
+    Не трогает периодические задачи и задачи без assignees.
+    Возвращает True если задача была закрыта."""
+    try:
+        t = db.query_one('SELECT id, status FROM tasks WHERE id=?', (task_id,))
+        if not t:
+            return False
+        st = (t.get('status') or 'active').strip()
+        if st not in ('active', 'paused'):
+            return False
+        tags = [r.get('tag') or '' for r in db.query('SELECT tag FROM task_tags WHERE task_id=?', (task_id,))]
+        if 'pereodic' in tags:
+            return False
+        assignees = [r.get('employee_id') or '' for r in db.query('SELECT employee_id FROM task_assignees WHERE task_id=?', (task_id,))]
+        assignees = [a for a in assignees if a]
+        if not assignees:
+            return False
+        last_map = {}
+        for l in db.query('SELECT id, employee_id, status, date FROM work_logs WHERE task_id=? ORDER BY date, id', (task_id,)):
+            eid = l.get('employee_id') or ''
+            if not eid:
+                continue
+            cur = last_map.get(eid)
+            if not cur or (l.get('date') or '', l.get('id') or 0) > (cur.get('date') or '', cur.get('id') or 0):
+                last_map[eid] = l
+        for eid in assignees:
+            rec = last_map.get(eid)
+            if not rec or (rec.get('status') or '') != 'done':
+                return False
+        # PATCH v1.0.8: completed_at = последняя done-отметка, а не today
+        _last_done = None
+        try:
+            _row = db.query_one(
+                "SELECT MAX(date) AS d FROM work_logs WHERE task_id=? AND status='done'",
+                (task_id,),
+            )
+            if _row and _row.get('d'):
+                _last_done = _row['d']
+        except Exception as _e:
+            print(f'[autoclose] max date failed: {_e}')
+        _completed_at = _last_done or date.today().strftime('%Y-%m-%d')
+        now_full = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        # PATCH v1.0.9: пишем auto_closed_at — по нему UI отличает автозакрытие
+        db.exec(
+            "UPDATE tasks SET status='done', completed_at=?, auto_closed_at=? WHERE id=?",
+            (_completed_at, now_full, task_id),
+        )
+        try:
+            with db.transaction() as tx:
+                tx.exec(
+                    'INSERT INTO audit_log (ts, user_id, username, kind, entity, entity_id, details) VALUES (?,?,?,?,?,?,?)',
+                    (now_full,
+                     (u or {}).get('id'), 'system:autoclose',
+                     'update', 'task', str(task_id),
+                     json.dumps({'action': 'auto_close', 'reason': 'all_assignees_done',
+                                 'assignees': assignees,
+                                 'auto_closed_at': now_full}, ensure_ascii=False)),
+                )
+        except Exception as _e:
+            print(f'[autoclose] audit failed: {_e}')
+        print(f'[autoclose] task {task_id} -> done (все назначенные закрыли, auto_closed_at={now_full})')
+        return True
+    except Exception as e:
+        print(f'[autoclose] failed for {task_id}: {e}')
+        return False
+
+
+def create_app():
+    cfg = json.loads(CONFIG_PATH.read_text(encoding='utf-8'))
+    app = Flask(__name__)
+    app.secret_key = cfg.get('secret_key') or secrets.token_urlsafe(48)
+    app.config['SESSION_COOKIE_HTTPONLY'] = True
+    app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
+    app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(
+        days=int(cfg.get('session_lifetime_days', 14))
+    )
+    # Бампните это значение после любого изменения static/*.js и *.css
+    # PATCH 1.0.6: автоверсия по SHA256 (внутри create_app, отступ 4)
+    try:
+        import hashlib as _hv
+        _hv_data = b''
+        for _hv_f in ('static/tracker.js', 'static/app.css', 'static/settings.js'):
+            _hv_p = BASE_DIR / _hv_f
+            if _hv_p.exists():
+                _hv_data += _hv_p.read_bytes()
+        app.config['STATIC_VERSION'] = _hv.sha256(_hv_data).hexdigest()[:16]
+    except Exception:
+        app.config['STATIC_VERSION'] = '20261019-auto'
+
+    db = TrackerDB(cfg['db_path'])
+
+    if not db.users_list():
+        admin_pwd = secrets.token_urlsafe(10)
+        # PATCH v2: hash_kody (кириллица)
+        uid = db.user_create(
+            'admin', hash_kody(admin_pwd), 'admin', 'Администратор', ''
+        )
+        db.user_permissions_set(uid, {k: True for k in ALL_PERMISSIONS})
+        print('=' * 60)
+        print(f'[INIT] Создан пользователь admin, parol: {admin_pwd}')
+        print('[INIT] Смените parol после первого входа!')
+        print('=' * 60)
+
+    if not db.query('SELECT 1 FROM holidays LIMIT 1'):
+        today = date.today()
+        for y in (today.year, today.year + 1):
+            for mmdd, name in _RU_HOLIDAYS:
+                db.set_holiday(f'{y}-{mmdd}', name)
+
+    # PATCH 04 — миграция: head_employee_id в departments
+    try:
+        cols = [r['name'] for r in db.query('PRAGMA table_info(departments)')]
+        if 'head_employee_id' not in cols:
+            db.exec("ALTER TABLE departments ADD COLUMN head_employee_id TEXT DEFAULT ''")
+            print('[INIT] departments.head_employee_id добавлено')
+    except Exception as _e:
+        print(f'[INIT] migration head_employee_id: {_e}')
+    # PATCH v1.0.3 — миграция: hired_date в employees
+    try:
+        cols = [r['name'] for r in db.query('PRAGMA table_info(employees)')]
+        if 'hired_date' not in cols:
+            db.exec("ALTER TABLE employees ADD COLUMN hired_date TEXT DEFAULT ''")
+            print('[INIT] employees.hired_date добавлено')
+    except Exception as _e:
+        print(f'[INIT] migration hired_date: {_e}')
+    # PATCH v1.0.9 — миграция: auto_closed_at в tasks
+    try:
+        cols = [r['name'] for r in db.query('PRAGMA table_info(tasks)')]
+        if 'auto_closed_at' not in cols:
+            db.exec("ALTER TABLE tasks ADD COLUMN auto_closed_at TEXT DEFAULT ''")
+            print('[INIT] tasks.auto_closed_at добавлено')
+    except Exception as _e:
+        print(f'[INIT] migration auto_closed_at: {_e}')
+    # PATCH v1.0.18 — миграция: is_urgent в tasks
+    try:
+        cols = [r['name'] for r in db.query('PRAGMA table_info(tasks)')]
+        if 'is_urgent' not in cols:
+            db.exec("ALTER TABLE tasks ADD COLUMN is_urgent INTEGER NOT NULL DEFAULT 0")
+            print('[INIT] tasks.is_urgent добавлено')
+    except Exception as _e:
+        print(f'[INIT] migration is_urgent: {_e}')
+    # PATCH v1.0.19 — миграция: links_json в tasks
+    try:
+        cols = [r['name'] for r in db.query('PRAGMA table_info(tasks)')]
+        if 'links_json' not in cols:
+            db.exec("ALTER TABLE tasks ADD COLUMN links_json TEXT DEFAULT ''")
+            print('[INIT] tasks.links_json добавлено')
+    except Exception as _e:
+        print(f'[INIT] migration links_json: {_e}')
+    # PATCH v1.0.32 — миграция: orders_json в tasks
+    try:
+        cols = [r['name'] for r in db.query('PRAGMA table_info(tasks)')]
+        if 'orders_json' not in cols:
+            db.exec("ALTER TABLE tasks ADD COLUMN orders_json TEXT DEFAULT ''")
+            print('[INIT] tasks.orders_json добавлено')
+    except Exception as _e:
+        print(f'[INIT] migration orders_json: {_e}')
+    # PATCH v1.0.4 — миграция: extra_meta в tasks
+    try:
+        cols = [r['name'] for r in db.query('PRAGMA table_info(tasks)')]
+        if 'extra_meta' not in cols:
+            db.exec("ALTER TABLE tasks ADD COLUMN extra_meta TEXT DEFAULT ''")
+            print('[INIT] tasks.extra_meta добавлено')
+    except Exception as _e:
+        print(f'[INIT] migration extra_meta: {_e}')
+    # PATCH tasks-stages — миграция: тип задачи, карман и даты начала этапов
+    try:
+        from db import TASK_STAGE_COLS as _STAGE_COLS
+        cols = [r['name'] for r in db.query('PRAGMA table_info(tasks)')]
+        if 'task_type' not in cols:
+            db.exec("ALTER TABLE tasks ADD COLUMN task_type TEXT DEFAULT ''")
+            print('[INIT] tasks.task_type добавлено')
+        if 'pocket' not in cols:
+            db.exec("ALTER TABLE tasks ADD COLUMN pocket TEXT DEFAULT ''")
+            print('[INIT] tasks.pocket добавлено')
+        for _sc in _STAGE_COLS:
+            if _sc not in cols:
+                db.exec("ALTER TABLE tasks ADD COLUMN %s TEXT DEFAULT ''" % _sc)
+                print('[INIT] tasks.%s добавлено' % _sc)
+    except Exception as _e:
+        print(f'[INIT] migration task stages: {_e}')
+    # PATCH tasks-lead — миграция: руководитель проверки (банк + сотрудник) в tasks
+    try:
+        cols = [r['name'] for r in db.query('PRAGMA table_info(tasks)')]
+        if 'lead_department' not in cols:
+            db.exec("ALTER TABLE tasks ADD COLUMN lead_department TEXT DEFAULT ''")
+            print('[INIT] tasks.lead_department добавлено')
+        if 'lead_employee' not in cols:
+            db.exec("ALTER TABLE tasks ADD COLUMN lead_employee TEXT DEFAULT ''")
+            print('[INIT] tasks.lead_employee добавлено')
+    except Exception as _e:
+        print(f'[INIT] migration task lead: {_e}')
+    # PATCH v1.0.4 — миграция: JSON-поля в work_logs
+    try:
+        cols = [r['name'] for r in db.query('PRAGMA table_info(work_logs)')]
+        if 'extra_data_json' not in cols:
+            db.exec("ALTER TABLE work_logs ADD COLUMN extra_data_json TEXT DEFAULT ''")
+            print('[INIT] work_logs.extra_data_json добавлено')
+        if 'orders_json' not in cols:
+            db.exec("ALTER TABLE work_logs ADD COLUMN orders_json TEXT DEFAULT ''")
+            print('[INIT] work_logs.orders_json добавлено')
+        if 'links_json' not in cols:
+            db.exec("ALTER TABLE work_logs ADD COLUMN links_json TEXT DEFAULT ''")
+            print('[INIT] work_logs.links_json добавлено')
+    except Exception as _e:
+        print(f'[INIT] migration work_logs json: {_e}')
+    app.config['DB'] = db
+    app.config['APP_CONFIG'] = cfg
+
+    @app.before_request
+    def _bind_db_and_csrf():
+        g.db = db
+        g.cfg = cfg
+        # PATCH 1.0.34: sliding session lifetime — продлеваем при активности
+        try:
+            if session.get('uid'):
+                session.modified = True
+        except Exception:
+            pass
+        # PATCH v1.0.6: CSRF также на /logout
+        _need_csrf = (
+            request.path.startswith('/api/') or request.path == '/logout'
+        )
+        if _need_csrf and request.method not in ('GET', 'HEAD', 'OPTIONS'):
+            if not check_csrf():
+                return jsonify({'success': False, 'error': 'csrf'}), 400
+        return None
+
+    @app.after_request
+    def _security_headers(resp):
+        resp.headers.setdefault('X-Content-Type-Options', 'nosniff')
+        resp.headers.setdefault('X-Frame-Options', 'DENY')
+        resp.headers.setdefault('Referrer-Policy', 'strict-origin-when-cross-origin')
+        resp.headers.setdefault('Permissions-Policy', 'geolocation=(), microphone=(), camera=()')
+        return resp
+
+    @app.context_processor
+    def _inject():
+        user = current_user(db) if session.get('uid') else None
+        return {
+            'csrf_token': ensure_csrf(),
+            'static_version': app.config.get('STATIC_VERSION', ''),
+            'current_user': user,
+            'perms': effective_permissions(db, user) if user else {},
+            'PERMISSION_GROUPS': PERMISSION_GROUPS,
+            'ABSENCE_TYPES': ABSENCE_TYPES,
+            'STATUS_LABELS': STATUS_LABELS,
+            'TASK_STATUS_LABELS': TASK_STATUS_LABELS,
+            'EMOJI_LIST': EMOJI_LIST,
+            'PALETTE': PALETTE,
+            'DEFAULT_TAG_PRESETS': DEFAULT_TAG_PRESETS,
+        }
+
+    # ============================================================
+    # AUTH
+    # ============================================================
+    def _active_users_for_login():
+        users = [u for u in db.users_list() if u.get('is_active')]
+        for u in users:
+            u.pop('kody_hash', None)
+        users.sort(key=lambda x: (x.get('display_name') or x['username']).lower())
+        return users
+
+    def _first_available_tab():
+        u = current_user(db)
+        for k in ('tab.calendar', 'tab.tasks', 'tab.heatmap', 'tab.summary',
+                  'tab.stats', 'tab.dicts'):
+            if user_has(db, u, k):
+                return k.split('.', 1)[1]
+        return 'calendar'
+
+    @app.route('/login', methods=['GET', 'POST'])
+    def login_page():
+        if request.method == 'GET':
+            if session.get('uid'):
+                return redirect(url_for('index'))
+            return render_template('login.html', error=None, users=_active_users_for_login())
+
+        data = request.form or {}
+        username = (data.get('username') or '').strip()
+        # PATCH v2: кириллица — форма отдаёт name="kody", но внутренняя переменная наша
+        kody = data.get('kody') or ''
+        u = db.user_get_by_name(username)
+        # PATCH v2: verify_kody (кириллица)
+        if not u or not u.get('is_active') or not verify_kody(u['kody_hash'], kody):
+            return render_template(
+                'login.html',
+                error='Неверный логин или parol',
+                users=_active_users_for_login(),
+            ), 401
+        login_user(u['id'])
+        db.user_set_last_login(u['id'])
+        _audit(db, u, 'login', 'user', u['id'], {'ip': request.remote_addr})
+        return redirect(url_for('index'))
+
+    @app.route('/logout', methods=['POST'])
+    def logout():
+        logout_user()
+        return redirect(url_for('login_page'))
+
+    # ============================================================
+    # PAGES
+    # ============================================================
+    @app.route('/')
+    @login_required
+    def index():
+        return render_template('tracker.html', active_tab=_first_available_tab())
+
+    @app.route('/settings')
+    @login_required
+    @permission_required('tab.settings')
+    def settings_page():
+        return render_template('settings.html')
+
+    # ============================================================
+    # API: STATE
+    # ============================================================
+    @app.route('/api/tracker/state', methods=['GET'])
+    @login_required
+    def api_state():
+        u = current_user(db)
+        perms = effective_permissions(db, u)
+        try:
+            log_days = int(request.args.get('log_days', 365))
+        except (ValueError, TypeError):
+            log_days = 365
+        # PATCH v2: используем load_all(since=...) — не грузим старые логи в память
+        if log_days > 0:
+            _cutoff = (date.today() - timedelta(days=log_days)).strftime('%Y-%m-%d')
+            data = _data(db, since=_cutoff)
+            log_truncated = True
+        else:
+            data = _data(db)
+            log_truncated = False
+        today = date.today().strftime('%Y-%m-%d')
+        tasks = []
+        for t in data['tasks']:
+            tt = dict(t)
+            tt['overdue'] = _is_overdue(t, today)
+            tt['completion_kind'] = _completion_kind(t)
+            tasks.append(tt)
+
+        all_tags = sorted({tag for t in data['tasks'] for tag in (t.get('tags') or [])})
+
+        return jsonify({
+            'success': True,
+            'employees': data['employees'],
+            'tasks': tasks,
+            'log': data['log'],
+            'log_truncated': log_truncated,
+            'log_days_used': log_days,
+            'departments': data['departments'],
+            'teams': data['teams'],
+            'holidays': data['holidays'],
+            'all_tags': all_tags,
+            'tag_presets': DEFAULT_TAG_PRESETS,
+            'log_count': len(data['log']),
+            'status_labels': STATUS_LABELS,
+            'task_status_labels': TASK_STATUS_LABELS,
+            'absence_types': ABSENCE_TYPES,
+            'palette': PALETTE,
+            'emoji': EMOJI_LIST,
+            'today': today,
+            'work_weekdays': list(WORK_WEEKDAYS),
+            'permissions': perms,
+            'current_user': {
+                'id': u['id'], 'username': u['username'],
+                'role': u['role'], 'display_name': u.get('display_name', ''),
+                'employee_id': u.get('employee_id') or '',
+            },
+        })
+
+    # ============================================================
+    # API: EMPLOYEES
+    # ============================================================
+    @app.route('/api/tracker/employee/save', methods=['POST'])
+    @login_required
+    def api_employee_save():
+        body = request.get_json() or {}
+        emp_id = str(body.get('id', '')).strip()
+        name = str(body.get('name', '')).strip()[:100]
+        color = str(body.get('color', '')).strip()[:20] or '#00897b'
+        role = str(body.get('role', '')).strip()[:50]
+        department_id = str(body.get('department_id', '')).strip()
+        fired = bool(body.get('fired', False))
+        fired_date = str(body.get('fired_date', '')).strip()[:20]
+        hired_date = str(body.get('hired_date', '')).strip()[:20]
+        if fired_date and not _valid_date(fired_date):
+            fired_date = ''
+        if not fired:
+            fired_date = ''
+        if hired_date and not _valid_date(hired_date):
+            hired_date = ''
+        # PATCH v1.0.6: дата увольнения не может быть раньше даты выхода
+        if fired_date and hired_date and fired_date < hired_date:
+            return jsonify({'success': False, 'error': 'Дата увольнения раньше даты выхода на работу'}), 400
+        if not name:
+            return jsonify({'success': False, 'error': 'Имя обязательно'}), 400
+
+        u = current_user(db)
+        need = 'action.employee.edit' if emp_id else 'action.employee.create'
+        if not user_has(db, u, need):
+            return jsonify({'success': False, 'error': 'forbidden', 'need': need}), 403
+
+        data = _data(db)
+        if department_id and not any(d['id'] == department_id for d in data['departments']):
+            department_id = ''
+
+        if not emp_id:
+            base = _slugify(name)
+            emp_id = base
+            i = 1
+            existing = {e['id'] for e in data['employees']}
+            while emp_id in existing:
+                i += 1
+                emp_id = f'{base}_{i}'
+
+        created = db.upsert_employee(emp_id, name, color, role, department_id, fired, fired_date, hired_date)
+        _audit(db, u, 'create' if created else 'update', 'employee', emp_id, {'name': name})
+
+        try:
+            existing_user = db.query_one(
+                'SELECT id FROM users WHERE employee_id=?', (emp_id,)
+            )
+            if not existing_user:
+                base = _translit_username(name)
+                uname = base
+                i = 1
+                while db.user_get_by_name(uname):
+                    i += 1
+                    uname = f'{base}_{i}'
+                # PATCH v2: hash_kody (кириллица)
+                new_uid = db.user_create(
+                    uname, hash_kody('123456'), 'user', name, emp_id
+                )
+                db.user_permissions_set(
+                    new_uid, {k: True for k in DEFAULT_USER_PERMISSIONS}
+                )
+                _audit(db, u, 'create', 'user', new_uid, {'username': uname, 'auto': True})
+        except Exception as e:
+            print(f'[employee_save] auto-create user failed: {e}')
+
+        return jsonify({'success': True, 'id': emp_id, 'created': created})
+
+    @app.route('/api/tracker/employee/delete', methods=['POST'])
+    @login_required
+    @permission_required('action.employee.delete')
+    def api_employee_delete():
+        emp_id = str((request.get_json() or {}).get('id', '')).strip()
+        if not emp_id:
+            return jsonify({'success': False, 'error': 'Не указан id'}), 400
+        # PATCH v1.0.8: 404 если сотрудник не найден
+        if not db.query_one('SELECT id FROM employees WHERE id=?', (emp_id,)):
+            return jsonify({'success': False, 'error': 'Сотрудник не найден'}), 404
+        # PATCH v2: сохраняем логи по умолчанию (drop_logs=False)
+        db.delete_employee(emp_id, drop_logs=False)
+        _audit(db, current_user(db), 'delete', 'employee', emp_id, {})
+        return jsonify({'success': True})
+
+    @app.route('/api/tracker/employee/vacation/add', methods=['POST'])
+    @login_required
+    @permission_required('action.employee.vacation.edit')
+    def api_vacation_add():
+        body = request.get_json() or {}
+        emp_id = str(body.get('employee_id', '')).strip()
+        dfrom = str(body.get('from', '')).strip()
+        dto = str(body.get('to', '')).strip()
+        vtype = str(body.get('type', 'vacation')).strip()
+        if vtype not in ABSENCE_TYPES:
+            vtype = 'vacation'
+        comment = str(body.get('comment', '')).strip()[:200]
+        if not emp_id:
+            return jsonify({'success': False, 'error': 'Не указан сотрудник'}), 400
+        if not _valid_date(dfrom) or not _valid_date(dto):
+            return jsonify({'success': False, 'error': 'Некорректные даты'}), 400
+        if dfrom > dto:
+            dfrom, dto = dto, dfrom
+        if db.employee_has_overlapping_vacation(emp_id, dfrom, dto):
+            return jsonify({'success': False, 'error': 'Пересекается с другим периодом'}), 400
+        db.add_vacation(emp_id, dfrom, dto, vtype, comment)
+        _audit(db, current_user(db), 'create', 'vacation', emp_id,
+               {'from': dfrom, 'to': dto, 'type': vtype})
+        return jsonify({'success': True})
+
+    @app.route('/api/tracker/employee/vacation/delete', methods=['POST'])
+    @login_required
+    @permission_required('action.employee.vacation.edit')
+    def api_vacation_delete():
+        body = request.get_json() or {}
+        emp_id = str(body.get('employee_id', '')).strip()
+        # PATCH v1.0.6: сначала пробуем id, затем fallback на index
+        vac_id = body.get('id')
+        try:
+            vac_id_int = int(vac_id) if vac_id is not None else None
+        except (ValueError, TypeError):
+            vac_id_int = None
+        if vac_id_int is None:
+            try:
+                idx = int(body.get('index'))
+            except (ValueError, TypeError):
+                return jsonify({'success': False, 'error': 'Некорректный id/index'}), 400
+            ok = db.delete_vacation(emp_id, idx)
+            if not ok:
+                return jsonify({'success': False, 'error': 'Период не найден'}), 404
+            _audit(db, current_user(db), 'delete', 'vacation', emp_id, {'index': idx})
+            return jsonify({'success': True})
+        row = db.query_one(
+            'SELECT id FROM employee_vacations WHERE id=? AND employee_id=?',
+            (vac_id_int, emp_id),
+        )
+        if not row:
+            return jsonify({'success': False, 'error': 'Период не найден'}), 404
+        db.delete_vacation_by_id(vac_id_int)
+        _audit(db, current_user(db), 'delete', 'vacation', emp_id, {'vacation_id': vac_id_int})
+        return jsonify({'success': True})
+
+    # ============================================================
+    # API: DEPARTMENTS
+    # ============================================================
+    @app.route('/api/tracker/department/save', methods=['POST'])
+    @login_required
+    def api_department_save():
+        body = request.get_json() or {}
+        dep_id = str(body.get('id', '')).strip()
+        name = str(body.get('name', '')).strip()[:80]
+        color = str(body.get('color', '')).strip()[:20] or '#00897b'
+        head_employee_id = str(body.get('head_employee_id', '')).strip()[:64]
+        if not name:
+            return jsonify({'success': False, 'error': 'Название обязательно'}), 400
+        u = current_user(db)
+        need = 'action.department.edit' if dep_id else 'action.department.create'
+        if not user_has(db, u, need):
+            return jsonify({'success': False, 'error': 'forbidden', 'need': need}), 403
+        if not dep_id:
+            base = _slugify(name) or 'dept'
+            dep_id = base
+            i = 1
+            existing = {d['id'] for d in db.query('SELECT id FROM departments')}
+            while dep_id in existing:
+                i += 1
+                dep_id = f'{base}_{i}'
+        if head_employee_id:
+            _emp_ok = db.query_one('SELECT id FROM employees WHERE id=?', (head_employee_id,))
+            if not _emp_ok:
+                head_employee_id = ''
+        try:
+            created = db.upsert_department(dep_id, name, color, head_employee_id)
+        except TypeError:
+            created = db.upsert_department(dep_id, name, color)
+        _audit(db, u, 'create' if created else 'update', 'department', dep_id,
+               {'name': name, 'head_employee_id': head_employee_id})
+        return jsonify({'success': True, 'id': dep_id, 'created': created})
+
+    @app.route('/api/tracker/department/delete', methods=['POST'])
+    @login_required
+    @permission_required('action.department.delete')
+    def api_department_delete():
+        dep_id = str((request.get_json() or {}).get('id', '')).strip()
+        if not dep_id:
+            return jsonify({'success': False, 'error': 'Не указан id'}), 400
+        # PATCH v1.0.8: 404 если отдел не найден
+        if not db.query_one('SELECT id FROM departments WHERE id=?', (dep_id,)):
+            return jsonify({'success': False, 'error': 'Отдел не найден'}), 404
+        db.delete_department(dep_id)
+        _audit(db, current_user(db), 'delete', 'department', dep_id, {})
+        return jsonify({'success': True})
+
+    # ============================================================
+    # API: TEAMS
+    # ============================================================
+    @app.route('/api/tracker/team/save', methods=['POST'])
+    @login_required
+    def api_team_save():
+        body = request.get_json() or {}
+        team_id = str(body.get('id', '')).strip()
+        name = str(body.get('name', '')).strip()[:80]
+        department_id = str(body.get('department_id', '')).strip()
+        manager_id = str(body.get('manager_id', '')).strip()
+        members = body.get('member_ids', [])
+        if not isinstance(members, list):
+            members = []
+        members = [str(m).strip() for m in members if str(m).strip()]
+        if not name:
+            return jsonify({'success': False, 'error': 'Название обязательно'}), 400
+        u = current_user(db)
+        need = 'action.team.edit' if team_id else 'action.team.create'
+        if not user_has(db, u, need):
+            return jsonify({'success': False, 'error': 'forbidden', 'need': need}), 403
+        data = _data(db)
+        valid_depts = {d['id'] for d in data['departments']}
+        valid_emps = {e['id'] for e in data['employees']}
+        if department_id and department_id not in valid_depts:
+            department_id = ''
+        if manager_id and manager_id not in valid_emps:
+            manager_id = ''
+        members = [m for m in members if m in valid_emps]
+        if manager_id and manager_id not in members:
+            members.append(manager_id)
+        if not team_id:
+            base = _slugify(name) or 'team'
+            team_id = base
+            i = 1
+            existing = {t['id'] for t in db.query('SELECT id FROM teams')}
+            while team_id in existing:
+                i += 1
+                team_id = f'{base}_{i}'
+        created = db.upsert_team(team_id, name, department_id, manager_id, members)
+        _audit(db, u, 'create' if created else 'update', 'team', team_id, {'name': name})
+        return jsonify({'success': True, 'id': team_id, 'created': created})
+
+    @app.route('/api/tracker/team/delete', methods=['POST'])
+    @login_required
+    @permission_required('action.team.delete')
+    def api_team_delete():
+        tid = str((request.get_json() or {}).get('id', '')).strip()
+        if not tid:
+            return jsonify({'success': False, 'error': 'Не указан id'}), 400
+        # PATCH v1.0.8: 404 если команда не найдена
+        if not db.query_one('SELECT id FROM teams WHERE id=?', (tid,)):
+            return jsonify({'success': False, 'error': 'Команда не найдена'}), 404
+        db.delete_team(tid)
+        _audit(db, current_user(db), 'delete', 'team', tid, {})
+        return jsonify({'success': True})
+
+    # ============================================================
+    # API: TASKS
+    # ============================================================
+    @app.route('/api/tracker/task/save', methods=['POST'])
+    @login_required
+    def api_task_save():
+        body = request.get_json() or {}
+        task_id = str(body.get('id', '')).strip()
+        name = str(body.get('name', '')).strip()[:200]
+        icon = str(body.get('icon', '')).strip()[:8] or '📋'
+        description = str(body.get('description', '')).strip()[:2000]
+        status = str(body.get('status', 'active')).strip()[:20]
+        deadline = str(body.get('deadline', '')).strip()[:20]
+        start_date = str(body.get('start_date', '')).strip()[:20]
+        completed_at = str(body.get('completed_at', '')).strip()[:20]
+        folder = str(body.get('folder', '')).strip()[:2000]
+        order_ref = str(body.get('order_ref', '')).strip()[:1000]
+        # PATCH tasks-stages: тип задачи, карман, даты начала этапов
+        from db import (TASK_TYPES as _TASK_TYPES,
+                        TASK_STAGE_ORDER as _STAGE_ORDER)
+        task_type = str(body.get('task_type', '')).strip()
+        if task_type not in _TASK_TYPES:
+            task_type = ''
+        pocket = str(body.get('pocket', '')).strip()[:200]
+        # PATCH tasks-lead: руководитель проверки (банк обязателен, сотрудник опц.)
+        lead_department = str(body.get('lead_department', '')).strip()
+        lead_employee = str(body.get('lead_employee', '')).strip()
+        _stages_raw = body.get('stages') or {}
+        if not isinstance(_stages_raw, dict):
+            _stages_raw = {}
+        stages = {}
+        for _sk in _STAGE_ORDER:
+            _sv = str(_stages_raw.get(_sk, '') or '').strip()[:20]
+            if _sv and not _valid_date(_sv):
+                _sv = ''
+            stages[_sk] = _sv
+        # PATCH v1.0.18: метка «очень срочная»
+        is_urgent = bool(body.get('is_urgent', False))
+        # PATCH v1.0.19: несколько ссылок с описанием
+        _links_raw = body.get('links') or []
+        if not isinstance(_links_raw, list):
+            _links_raw = []
+        links = []
+        for _lk in _links_raw[:30]:
+            if isinstance(_lk, str):
+                _u = _lk.strip()
+                _d = ''
+            elif isinstance(_lk, dict):
+                _u = str(_lk.get('url', '')).strip()
+                _d = str(_lk.get('description', '')).strip()[:200]
+            else:
+                continue
+            if not _u:
+                continue
+            links.append({'url': _u[:1000], 'description': _d})
+        # PATCH v1.0.32: приказы/распоряжения как список {description, value}
+        _orders_raw = body.get('orders') or []
+        if not isinstance(_orders_raw, list):
+            _orders_raw = []
+        orders = []
+        for _o in _orders_raw[:50]:
+            if not isinstance(_o, dict):
+                continue
+            _od = str(_o.get('description', '')).strip()[:200]
+            _ov = str(_o.get('value', '')).strip()[:1000]
+            if not _ov and not _od:
+                continue
+            orders.append({'description': _od, 'value': _ov})
+        if start_date and not _valid_date(start_date):
+            start_date = ''
+        if completed_at and not _valid_date(completed_at):
+            completed_at = ''
+        if deadline and not _valid_date(deadline):
+            return jsonify({'success': False, 'error': 'Некорректный дедлайн'}), 400
+        # PATCH v1.0.6: дата начала не может быть позже дедлайна
+        if start_date and deadline and start_date > deadline:
+            return jsonify({'success': False, 'error': 'Дата начала позже дедлайна'}), 400
+        if status not in TASK_STATUS_LABELS:
+            status = 'active'
+
+        tags_raw = body.get('tags', [])
+        if isinstance(tags_raw, str):
+            tags = [t.strip() for t in tags_raw.split(',') if t.strip()][:20]
+        elif isinstance(tags_raw, list):
+            tags = [str(t).strip()[:40] for t in tags_raw if str(t).strip()][:20]
+        else:
+            tags = []
+        clean_tags = []
+        seen = set()
+        for tag in tags:
+            tag = tag.lstrip('#').replace(' ', '_').lower()
+            if not tag or tag in seen:
+                continue
+            seen.add(tag)
+            clean_tags.append(tag)
+        tags = clean_tags[:20]
+
+        assignees = body.get('assignees', [])
+        if not isinstance(assignees, list):
+            assignees = []
+        assignees = [str(a).strip() for a in assignees if str(a).strip()]
+
+        dep_ids_raw = body.get('department_ids', [])
+        if isinstance(dep_ids_raw, str):
+            dep_ids_raw = [dep_ids_raw.strip()] if dep_ids_raw.strip() else []
+        if not isinstance(dep_ids_raw, list):
+            dep_ids_raw = []
+        dep_ids = [str(x).strip() for x in dep_ids_raw if str(x).strip()]
+
+        if not name:
+            return jsonify({'success': False, 'error': 'Название обязательно'}), 400
+
+        u = current_user(db)
+        need = 'action.task.edit' if task_id else 'action.task.create'
+        if not user_has(db, u, need):
+            return jsonify({'success': False, 'error': 'forbidden', 'need': need}), 403
+
+        data = _data(db)
+        valid_depts = {d['id'] for d in data['departments']}
+        valid_emps = {e['id'] for e in data['employees']}
+        dep_ids = [x for x in dep_ids if x in valid_depts]
+        if dep_ids:
+            allowed = {e['id'] for e in data['employees']
+                       if e.get('department_id') in dep_ids}
+            assignees = [a for a in assignees if a in allowed]
+        else:
+            assignees = [a for a in assignees if a in valid_emps]
+
+        # PATCH tasks-lead: руководитель проверки.
+        # Банк-руководитель обязателен и должен быть среди банков-участников.
+        # Сотрудник-руководитель опционален; если задан — должен работать
+        # в банке-руководителе.
+        if not dep_ids:
+            return jsonify({'success': False,
+                            'error': 'Нужно выбрать минимум один банк-участник'}), 400
+        if not lead_department:
+            return jsonify({'success': False,
+                            'error': 'Укажите банк-руководитель проверки'}), 400
+        if lead_department not in dep_ids:
+            return jsonify({'success': False,
+                            'error': 'Банк-руководитель должен быть среди банков-участников'}), 400
+        if lead_employee:
+            _emp_by_id = {e['id']: e for e in data['employees']}
+            _le = _emp_by_id.get(lead_employee)
+            if not _le or _le.get('department_id') != lead_department:
+                # Сотрудник не из банка-руководителя — не критично, просто сбрасываем
+                lead_employee = ''
+
+        # PATCH 19 — проверка дубликатов имён задач (только при создании)
+        if not task_id:
+            def _norm_name(s):
+                import re as _re_n
+                return _re_n.sub(r'\s+', ' ', str(s or '').strip().lower())
+            def _lev(a, b):
+                if a == b:
+                    return 0
+                la, lb = len(a), len(b)
+                if la == 0:
+                    return lb
+                if lb == 0:
+                    return la
+                prev = list(range(lb + 1))
+                for i in range(1, la + 1):
+                    cur = [i] + [0] * lb
+                    for j in range(1, lb + 1):
+                        cost = 0 if a[i-1] == b[j-1] else 1
+                        cur[j] = min(cur[j-1] + 1, prev[j] + 1, prev[j-1] + cost)
+                    prev = cur
+                return prev[lb]
+            _force_dup = bool(body.get('force_duplicate'))
+            _name_norm = _norm_name(name)
+            _exact = None
+            _similar = []
+            try:
+                for _t in db.query('SELECT id, name FROM tasks'):
+                    _tn = _norm_name(_t.get('name') or '')
+                    if not _tn:
+                        continue
+                    if _tn == _name_norm:
+                        _exact = {'id': _t['id'], 'name': _t.get('name') or ''}
+                        break
+                    if len(_name_norm) >= 5 and len(_tn) >= 5:
+                        if _tn in _name_norm or _name_norm in _tn:
+                            _similar.append({'id': _t['id'], 'name': _t.get('name') or ''})
+                        elif _lev(_name_norm, _tn) <= 2:
+                            _similar.append({'id': _t['id'], 'name': _t.get('name') or ''})
+            except Exception as _e:
+                print(f'[task_save] dup check failed: {_e}')
+            if (_exact or _similar) and not _force_dup:
+                return jsonify({
+                    'success': False,
+                    'error': 'duplicate_name',
+                    'exact': _exact,
+                    'similar': _similar[:5],
+                    'message': 'Задача с таким или похожим названием уже существует',
+                }), 409
+            if (_exact or _similar) and _force_dup:
+                _audit(db, u, 'create', 'task', '', {
+                    'name': name, 'force_duplicate': True,
+                    'exact_match': _exact['id'] if _exact else '',
+                    'similar_count': len(_similar),
+                })
+        # PATCH 23 — автоназначение: сотрудник, создающий задачу, добавляется в assignees
+        if not task_id:
+            try:
+                _u_emp = (u.get('employee_id') or '').strip()
+                _is_admin = (u.get('role') == 'admin')
+                if _u_emp and not _is_admin and _u_emp not in assignees:
+                    assignees.append(_u_emp)
+                    print(f'[task_save] auto-assign {_u_emp} to new task')
+            except Exception as _e:
+                print(f'[task_save] auto-assign failed: {_e}')
+        now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        if not task_id:
+            base = _slugify(name)
+            task_id = base
+            i = 1
+            existing = {t['id'] for t in data['tasks']}
+            while task_id in existing:
+                i += 1
+                task_id = f'{base}_{i}'
+        if not start_date:
+            start_date = now_str[:10]
+        # PATCH v1.0.14: completed_at принимается от клиента как есть.
+        # Пустое значение = «закрыта без даты». Автозаполнение today
+        # перенесено на клиент (при переходе в done подставляется
+        # сегодня, но админ может его стереть и сохранить).
+        if status not in ('done', 'archived'):
+            completed_at = ''
+
+        try:
+            created = db.upsert_task(task_id, {
+                'name': name, 'icon': icon, 'description': description,
+                'status': status, 'start_date': start_date, 'deadline': deadline,
+                'completed_at': completed_at, 'folder': folder, 'order_ref': order_ref,
+                'tags': tags, 'assignees': assignees, 'department_ids': dep_ids,
+                'created_at': now_str,
+                'is_urgent': is_urgent,
+                'links': links,
+                'orders': orders,
+                'task_type': task_type,
+                'pocket': pocket,
+                'lead_department': lead_department,
+                'lead_employee': lead_employee,
+                'stages': stages,
+            })
+        except ValueError as _ve:
+            # PATCH tasks-stages: валидация пересечения этапов в db.upsert_task
+            return jsonify({'success': False, 'error': str(_ve)}), 400
+        # PATCH v1.0.9: если админ вручную вернул задачу из done в другой
+        # статус — снимаем метку авто (статус снова считается решением админа).
+        try:
+            if status != 'done':
+                db.exec("UPDATE tasks SET auto_closed_at='' WHERE id=?", (task_id,))
+        except Exception as _e:
+            print(f'[task_save] reset auto_closed_at failed: {_e}')
+        _audit(db, u, 'create' if created else 'update', 'task', task_id,
+               {'name': name, 'tags': tags})
+        try:
+            app.config['PLUGIN_REGISTRY'].emit('on_task_save', user=u,
+                                                task_id=task_id, created=created)
+        except Exception:
+            pass
+        # PATCH v1.0.16: уведомление по вертикали о новой задаче
+        if created:
+            try:
+                _notify_task_created(db, task_id, u)
+            except Exception as _e:
+                print(f'[notify] task_created hook failed: {_e}')
+        return jsonify({'success': True, 'id': task_id, 'created': created})
+
+    @app.route('/api/tracker/task/delete', methods=['POST'])
+    @login_required
+    @permission_required('action.task.delete')
+    def api_task_delete():
+        body = request.get_json() or {}
+        tid = str(body.get('id', '')).strip()
+        force = bool(body.get('force'))
+        if not tid:
+            return jsonify({'success': False, 'error': 'Не указан id'}), 400
+        # PATCH 27 — проверка отметок
+        _logs = db.query(
+            'SELECT id, employee_id, date, hours, status FROM work_logs WHERE task_id=?',
+            (tid,)
+        )
+        if _logs and not force:
+            _emp_ids = sorted(set((l.get('employee_id') or '') for l in _logs if l.get('employee_id')))
+            _emps = []
+            for _eid in _emp_ids:
+                _e = db.query_one('SELECT id, name FROM employees WHERE id=?', (_eid,))
+                _emps.append({'id': _eid, 'name': (_e.get('name') if _e else _eid)})
+            _dates = sorted(set((l.get('date') or '') for l in _logs if l.get('date')))
+            return jsonify({
+                'success': False,
+                'error': 'task_has_logs',
+                'logs_count': len(_logs),
+                'employees': _emps,
+                'dates_count': len(_dates),
+                'first_date': _dates[0] if _dates else '',
+                'last_date': _dates[-1] if _dates else '',
+                'message': 'По задаче есть отметки выполнения',
+            }), 409
+        _snapshot = {'logs_deleted': len(_logs)} if _logs else {}
+        # PATCH v2: передаём drop_logs=True — удаляем в одной транзакции с задачей
+        db.delete_task(tid, drop_logs=bool(_logs))
+        _audit(db, current_user(db), 'delete', 'task', tid, _snapshot)
+        return jsonify({'success': True, 'logs_deleted': len(_logs) if _logs else 0})
+
+    # ============================================================
+    # v1.2.7 — API: TASK MERGE
+    # ============================================================
+    @app.route('/api/tracker/task/merge', methods=['POST'])
+    @login_required
+    @permission_required('action.task.edit')
+    def api_task_merge():
+        body = request.get_json() or {}
+        task_ids = body.get('task_ids') or []
+        if not isinstance(task_ids, list) or len(task_ids) < 2:
+            return jsonify({'success': False, 'error': 'Нужно минимум 2 задачи'}), 400
+        task_ids = [str(t).strip() for t in task_ids if str(t).strip()]
+        data = _data(db)
+        existing = {t['id'] for t in data['tasks']}
+        task_ids = [t for t in task_ids if t in existing]
+        if len(task_ids) < 2:
+            return jsonify({'success': False, 'error': 'Меньше двух существующих задач'}), 400
+        survivor_id = str(body.get('survivor_id', '')).strip()
+        if survivor_id not in task_ids:
+            survivor_id = task_ids[0]
+        merge_ids = [t for t in task_ids if t != survivor_id]
+        keep = body.get('keep') or {}
+        name = str(keep.get('name') or '').strip()[:200]
+        icon = str(keep.get('icon') or '').strip()[:8] or '📋'
+        description = str(keep.get('description') or '').strip()[:2000]
+        status = str(keep.get('status') or 'active').strip()
+        if status not in TASK_STATUS_LABELS:
+            status = 'active'
+        start_date = str(keep.get('start_date') or '').strip()[:20]
+        deadline = str(keep.get('deadline') or '').strip()[:20]
+        completed_at = str(keep.get('completed_at') or '').strip()[:20]
+        _surv = next((t for t in data['tasks'] if t['id'] == survivor_id), {})
+        name = (_surv.get('name') or '').strip() or 'Объединённая задача'
+        icon = _surv.get('icon') or '📋'
+        start_date = _surv.get('start_date') or ''
+        deadline = _surv.get('deadline') or ''
+        completed_at = _surv.get('completed_at') or ''
+        status = _surv.get('status') or 'active'
+        all_tags, all_assignees, all_deps = set(), set(), set()
+        _descs, _folders, _orders = [], [], []
+        _seen_desc, _seen_folder, _seen_order = set(), set(), set()
+        for t in data['tasks']:
+            if t['id'] in task_ids:
+                for tag in (t.get('tags') or []): all_tags.add(tag)
+                for a in (t.get('assignees') or []): all_assignees.add(a)
+                for d in (t.get('department_ids') or []): all_deps.add(d)
+                _d = (t.get('description') or '').strip()
+                if _d and _d not in _seen_desc:
+                    _seen_desc.add(_d)
+                    _descs.append(_d)
+                _f = (t.get('folder') or '').strip()
+                if _f and _f not in _seen_folder:
+                    _seen_folder.add(_f)
+                    _folders.append(_f)
+                _o = (t.get('order_ref') or '').strip()
+                if _o and _o not in _seen_order:
+                    _seen_order.add(_o)
+                    _orders.append(_o)
+        if _descs:
+            description = '\n\n'.join(_descs)[:2000]
+        _folder_merged = '\n'.join(_folders)[:2000]
+        _order_merged = '\n'.join(_orders)[:1000]
+        folder_field = _folder_merged
+        order_ref_field = _order_merged
+        if isinstance(body.get('tags'), list):
+            all_tags = set(str(x).strip() for x in body['tags'] if str(x).strip())
+        if isinstance(body.get('assignees'), list):
+            all_assignees = set(str(x).strip() for x in body['assignees'] if str(x).strip())
+        if isinstance(body.get('department_ids'), list):
+            all_deps = set(str(x).strip() for x in body['department_ids'] if str(x).strip())
+        valid_emps = {e['id'] for e in data['employees']}
+        valid_deps = {d['id'] for d in data['departments']}
+        all_assignees = all_assignees & valid_emps
+        all_deps = all_deps & valid_deps
+        try:
+            with db.transaction() as tx:
+                tx.exec(
+                    'UPDATE tasks SET name=?, icon=?, description=?, status=?, '
+                    'start_date=?, deadline=?, completed_at=?, folder=?, order_ref=? '
+                    'WHERE id=?',
+                    (name, icon, description, status, start_date, deadline, completed_at,
+                     folder_field, order_ref_field, survivor_id))
+                _ph = ','.join('?' * len(merge_ids))
+                tx.exec('UPDATE work_logs SET task_id=? WHERE task_id IN (' + _ph + ')',
+                        tuple([survivor_id] + merge_ids))
+                tx.exec('DELETE FROM task_tags WHERE task_id=?', (survivor_id,))
+                for tag in sorted(all_tags):
+                    tx.exec('INSERT OR IGNORE INTO task_tags (task_id, tag) VALUES (?,?)', (survivor_id, tag))
+                tx.exec('DELETE FROM task_assignees WHERE task_id=?', (survivor_id,))
+                for a in sorted(all_assignees):
+                    tx.exec('INSERT OR IGNORE INTO task_assignees (task_id, employee_id) VALUES (?,?)', (survivor_id, a))
+                tx.exec('DELETE FROM task_departments WHERE task_id=?', (survivor_id,))
+                for d in sorted(all_deps):
+                    tx.exec('INSERT OR IGNORE INTO task_departments (task_id, department_id) VALUES (?,?)', (survivor_id, d))
+                for mid in merge_ids:
+                    tx.exec('DELETE FROM task_tags WHERE task_id=?', (mid,))
+                    tx.exec('DELETE FROM task_assignees WHERE task_id=?', (mid,))
+                    tx.exec('DELETE FROM task_departments WHERE task_id=?', (mid,))
+                    tx.exec('DELETE FROM tasks WHERE id=?', (mid,))
+        except Exception as e:
+            traceback.print_exc()
+            return jsonify({'success': False, 'error': f'merge failed: {e}'}), 500
+        _audit(db, current_user(db), 'merge', 'task', survivor_id,
+               {'merged_ids': merge_ids, 'name': name})
+        return jsonify({'success': True, 'survivor_id': survivor_id, 'merged_ids': merge_ids})
+
+    # ============================================================
+    # API: LOGS
+    # ============================================================
+    @app.route('/api/tracker/log/save', methods=['POST'])
+    @login_required
+    def api_log_save():
+        body = request.get_json() or {}
+        try:
+            _dbg_path = Path(__file__).parent / 'trk_debug.log'
+            with _dbg_path.open('a', encoding='utf-8') as _dbgf:
+                _dbgf.write(f'{datetime.now().strftime("%H:%M:%S")} log_save task={body.get("task_id")} emp={body.get("employee_id")} id={body.get("id")} comment_len={len(str(body.get("comment") or ""))} merge={body.get("merge_into_task")}' + chr(10))
+        except Exception:
+            pass
+        log_id_raw = body.get('id')
+        employee_id = str(body.get('employee_id', '')).strip()
+        task_id = str(body.get('task_id', '')).strip()
+        date_str = str(body.get('date', '')).strip()
+        comment = str(body.get('comment', '')).strip()[:2000]
+        status = str(body.get('status', 'in_progress')).strip()[:20]
+        link = str(body.get('link', '')).strip()[:500]
+        # PATCH v1.0.4: описание + multi-поля
+        _desc_from_body = str(body.get('description', '') or '').strip()[:2000]
+        if _desc_from_body:
+            comment = _desc_from_body
+        _extra_raw = body.get('extra_data') or []
+        if not isinstance(_extra_raw, list):
+            _extra_raw = []
+        extra_data = [str(x).strip()[:500] for x in _extra_raw if str(x or '').strip()][:30]
+        _orders_raw = body.get('orders') or []
+        if not isinstance(_orders_raw, list):
+            _orders_raw = []
+        orders = []
+        for _o in _orders_raw[:30]:
+            if not isinstance(_o, dict):
+                continue
+            _v = str(_o.get('value') or '').strip()[:1000]
+            if not _v:
+                continue
+            orders.append({
+                'description': str(_o.get('description') or '').strip()[:200],
+                'value': _v,
+            })
+        _links_raw = body.get('links') or []
+        if not isinstance(_links_raw, list):
+            _links_raw = []
+        links = []
+        for _l in _links_raw[:30]:
+            if not isinstance(_l, dict):
+                continue
+            _u = str(_l.get('url') or '').strip()[:1000]
+            if not _u:
+                continue
+            links.append({
+                'description': str(_l.get('description') or '').strip()[:200],
+                'url': _u,
+            })
+        try:
+            hours = float(body.get('hours', 0) or 0)
+        except (ValueError, TypeError):
+            hours = 0
+        hours = max(0.0, min(24.0, hours))
+        hours = round(hours * 4) / 4
+
+        _is_create = not log_id_raw
+        # PATCH v1.0.6: минимум 30 минут работает и при редактировании
+        if hours < 0.5:
+            return jsonify({'success': False, 'error': 'Минимум 30 минут (0.5 ч)'}), 400
+        # PATCH v1.0.19: запрет дубля отметки за день
+        if _is_create and employee_id and task_id and _valid_date(date_str):
+            _dup_row = db.query_one(
+                'SELECT id, hours, comment FROM work_logs WHERE employee_id=? AND task_id=? AND date=? ORDER BY id DESC LIMIT 1',
+                (employee_id, task_id, date_str),
+            )
+            if _dup_row:
+                _emp_obj = db.query_one('SELECT name FROM employees WHERE id=?', (employee_id,))
+                _tsk_obj = db.query_one('SELECT name FROM tasks WHERE id=?', (task_id,))
+                return jsonify({
+                    'success': False,
+                    'error': 'already_logged_today',
+                    'existing_id': _dup_row['id'],
+                    'existing_hours': float(_dup_row.get('hours') or 0),
+                    'employee_name': (_emp_obj or {}).get('name', employee_id),
+                    'task_name': (_tsk_obj or {}).get('name', task_id),
+                    'date': date_str,
+                    'message': 'У этого сотрудника уже есть отметка за этот день по этой задаче',
+                }), 409
+        if not employee_id:
+            return jsonify({'success': False, 'error': 'Выберите сотрудника'}), 400
+        if not task_id:
+            return jsonify({'success': False, 'error': 'Выберите задачу'}), 400
+        if not _valid_date(date_str):
+            return jsonify({'success': False, 'error': 'Некорректная дата'}), 400
+        if not db.query_one('SELECT id FROM employees WHERE id=?', (employee_id,)):
+            return jsonify({'success': False, 'error': 'Сотрудник не найден'}), 400
+        if not db.query_one('SELECT id FROM tasks WHERE id=?', (task_id,)):
+            return jsonify({'success': False, 'error': 'Задача не найдена'}), 400
+        if status not in STATUS_LABELS:
+            status = 'in_progress'
+
+        u = current_user(db)
+        now_merge = datetime.now().strftime('%Y-%m-%d %H:%M')
+        if not log_id_raw:
+            _existing_merge = db.query_one(
+                'SELECT * FROM work_logs WHERE employee_id=? AND task_id=? AND date=? ORDER BY id DESC LIMIT 1',
+                (employee_id, task_id, date_str)
+            )
+            if _existing_merge:
+                _old_c = (_existing_merge.get('comment') or '').strip()
+                _old_l = (_existing_merge.get('link') or '').strip()
+                _old_h = float(_existing_merge.get('hours') or 0)
+                _parts_c = []
+                if _old_c:
+                    _parts_c.append(_old_c)
+                if comment:
+                    _parts_c.append('[' + now_merge + '] ' + comment)
+                _merged_c = '\n'.join(_parts_c)[:2000]
+                _parts_l = []
+                if _old_l:
+                    _parts_l.append(_old_l)
+                if link and link != _old_l:
+                    _parts_l.append('[' + now_merge + '] ' + link)
+                _merged_l = '\n'.join(_parts_l)[:500]
+                _total_h = round((_old_h + hours) * 4) / 4
+                if _total_h > 24:
+                    _total_h = 24.0
+                log_id_raw = _existing_merge['id']
+                comment = _merged_c
+                link = _merged_l
+                hours = _total_h
+        if log_id_raw:
+            existing = db.query_one('SELECT * FROM work_logs WHERE id=?', (log_id_raw,))
+            if not existing:
+                return jsonify({'success': False, 'error': 'Отметка не найдена'}), 404
+            own = (existing['employee_id'] == (u.get('employee_id') or ''))
+            if own:
+                if not (user_has(db, u, 'action.log.edit.own')
+                        or user_has(db, u, 'action.log.edit.any')):
+                    return jsonify({'success': False, 'error': 'forbidden'}), 403
+            else:
+                if not user_has(db, u, 'action.log.edit.any'):
+                    return jsonify({'success': False, 'error': 'forbidden'}), 403
+        else:
+            if not user_has(db, u, 'action.log.create'):
+                return jsonify({'success': False, 'error': 'forbidden'}), 403
+            if not user_has(db, u, 'action.log.edit.any'):
+                my_emp = u.get('employee_id') or ''
+                if not my_emp or employee_id != my_emp:
+                    return jsonify({
+                        'success': False,
+                        'error': 'Можно вносить отметки только за себя'
+                    }), 403
+
+        # PATCH v1.0.6: проверка 8 часов работает и при редактировании.
+        # Редактируемая отметка исключается из суммы, чтобы не считать её дважды.
+        if hours > 0:
+            _existing = db.query(
+                'SELECT id, task_id, hours FROM work_logs WHERE employee_id=? AND date=?',
+                (employee_id, date_str)
+            )
+            if log_id_raw:
+                _cur_id = int(log_id_raw)
+                _existing = [r for r in _existing if r['id'] != _cur_id]
+            _sum_existing = sum(float(r.get('hours') or 0) for r in _existing)
+            if _sum_existing + hours > 8 + 1e-6:
+                _action = str(body.get('overflow_action') or '').strip()
+                if _action == 'accept':
+                    pass
+                elif _action == 'distribute':
+                    _existing_pos = [r for r in _existing if float(r.get('hours') or 0) > 0]
+                    _all_hours = [float(r.get('hours') or 0) for r in _existing_pos] + [hours]
+                    _n = len(_all_hours)
+                    if _n >= 1:
+                        _target = round((8.0 / _n) * 4) / 4
+                        if _target < 0.5:
+                            _target = 0.5
+                        _last_val = round((8.0 - _target * (_n - 1)) * 4) / 4
+                        if _last_val < 0.5:
+                            _last_val = 0.5
+                        _new_vals = [_target] * (_n - 1) + [_last_val]
+                        _existing_sorted = sorted(_existing_pos, key=lambda r: (r.get('id') or 0))
+                        _idx = 0
+                        _update_pairs = []
+                        for _r in _existing_sorted:
+                            _update_pairs.append((_new_vals[_idx], _r['id']))
+                            _idx += 1
+                        hours = _new_vals[_idx] if _idx < len(_new_vals) else _target
+                        with db.transaction() as _tx:
+                            for _h, _lid in _update_pairs:
+                                _tx.exec('UPDATE work_logs SET hours=? WHERE id=?', (_h, _lid))
+                else:
+                    return jsonify({
+                        'success': False,
+                        'error': 'daily_overflow',
+                        'sum_existing': round(_sum_existing * 4) / 4,
+                        'new_hours': hours,
+                        'total': round((_sum_existing + hours) * 4) / 4,
+                        'message': 'Превышение 8 часов за день',
+                    }), 409
+        # PATCH v1.0.4: сериализация multi-полей
+        _extra_json = json.dumps(extra_data, ensure_ascii=False) if extra_data else '[]'
+        _orders_json = json.dumps(orders, ensure_ascii=False) if orders else '[]'
+        _links_json = json.dumps(links, ensure_ascii=False) if links else '[]'
+        created = db.upsert_log(
+            int(log_id_raw) if log_id_raw else None,
+            {
+                'employee_id': employee_id, 'task_id': task_id, 'date': date_str,
+                'hours': hours, 'comment': comment, 'status': status, 'link': link,
+                'extra_data_json': _extra_json,
+                'orders_json': _orders_json,
+                'links_json': _links_json,
+            }
+        )
+        _audit(db, u, 'create' if created else 'update', 'log', log_id_raw or created,
+               {'employee_id': employee_id, 'task_id': task_id,
+                'date': date_str, 'hours': hours, 'status': status})
+        try:
+            app.config['PLUGIN_REGISTRY'].emit('on_log_save', user=u,
+                                                log_id=created, created=created)
+        except Exception:
+            pass
+        # PATCH v1.0.9: при любом сохранении лога к задаче проверяем
+        # (а) все ли закрыли — если да, автозакрываем;
+        # (б) не откатил ли кто-то auto-закрытую задачу назад.
+        if task_id:
+            try:
+                _autoclose_if_all_done(db, task_id, u)
+            except Exception as _e:
+                print(f'[autoclose] hook failed: {_e}')
+            try:
+                _try_reopen_if_stale_autoclose(db, task_id, u)
+            except Exception as _e:
+                print(f'[reopen] hook failed: {_e}')
+        # PATCH v1.0.20: уведомляем админов/руководителей о закрытии
+        if status == 'done' and task_id and created:
+            try:
+                _notify_task_done(db, task_id, employee_id, u)
+            except Exception as _e:
+                print(f'[notify] hook failed: {_e}')
+        # PATCH v1.0.4 + v1.0.15: при создании или правке отметки — пушим данные в задачу
+        _merge_into_task = bool(body.get('merge_into_task'))
+        _merge_info = None
+        # PATCH v1.0.19: при обновлении отметки тоже сливаем (построчно),
+        # чтобы добавленные строки описания/приказов/ссылок попадали в задачу.
+        if task_id:
+            try:
+                _merge_info = _merge_log_data_into_task(
+                    db, task_id, employee_id, u,
+                    description=comment,
+                    extra_data=extra_data,
+                    orders=orders,
+                    links=links,
+                )
+            except Exception as _e:
+                print(f'[merge_log] failed: {_e}')
+        _resp = {'success': True, 'created': created}
+        if _merge_info:
+            _resp['merge_info'] = _merge_info
+        return jsonify(_resp)
+
+    @app.route('/api/tracker/log/delete', methods=['POST'])
+    @login_required
+    def api_log_delete():
+        try:
+            log_id = int((request.get_json() or {}).get('id'))
+        except (ValueError, TypeError):
+            return jsonify({'success': False, 'error': 'Некорректный id'}), 400
+        u = current_user(db)
+        existing = db.query_one('SELECT * FROM work_logs WHERE id=?', (log_id,))
+        if not existing:
+            return jsonify({'success': False, 'error': 'Не найдено'}), 404
+        own = (existing['employee_id'] == (u.get('employee_id') or ''))
+        need = 'action.log.delete.own' if own else 'action.log.delete.any'
+        if not user_has(db, u, need):
+            return jsonify({'success': False, 'error': 'forbidden', 'need': need}), 403
+        db.delete_log(log_id)
+        _audit(db, u, 'delete', 'log', log_id,
+               {'employee_id': existing.get('employee_id'),
+                'task_id': existing.get('task_id')})
+        # PATCH v1.0.9: удаление лога меняет картину «все ли закрыли»
+        _task_id_del = existing.get('task_id')
+        if _task_id_del:
+            try:
+                _autoclose_if_all_done(db, _task_id_del, u)
+            except Exception as _e:
+                print(f'[autoclose] delete hook failed: {_e}')
+            try:
+                _try_reopen_if_stale_autoclose(db, _task_id_del, u)
+            except Exception as _e:
+                print(f'[reopen] delete hook failed: {_e}')
+        return jsonify({'success': True})
+
+    @app.route('/api/tracker/log/copy_day', methods=['POST'])
+    @login_required
+    @permission_required('action.log.create')
+    def api_log_copy_day():
+        body = request.get_json() or {}
+        src = str(body.get('source', '')).strip()
+        dst = str(body.get('target', '')).strip()
+        emp_filter = str(body.get('employee', '')).strip()
+        if not _valid_date(src) or not _valid_date(dst) or src == dst:
+            return jsonify({'success': False, 'error': 'Некорректные даты'}), 400
+        u = current_user(db)
+        my_emp = (u.get('employee_id') or '').strip()
+        if not user_has(db, u, 'action.log.edit.any'):
+            if not my_emp:
+                return jsonify({'success': False, 'error': 'forbidden'}), 403
+            if emp_filter and emp_filter != my_emp:
+                return jsonify({'success': False, 'error': 'forbidden'}), 403
+            emp_filter = my_emp
+        else:
+            if not emp_filter:
+                return jsonify({
+                    'success': False,
+                    'error': 'Не указан сотрудник. Для копирования дня нужно выбрать, за кого копировать.',
+                    'need_employee': True,
+                }), 400
+            if not db.query_one('SELECT id FROM employees WHERE id=?', (emp_filter,)):
+                return jsonify({'success': False, 'error': 'Сотрудник не найден'}), 400
+        copied = db.copy_day_logs(src, dst, emp_filter)
+        _audit(db, current_user(db), 'create', 'log_copy', '',
+               {'source': src, 'target': dst, 'employee': emp_filter})
+        return jsonify({'success': True, 'copied': copied})
+
+    @app.route('/api/tracker/log/clear_day', methods=['POST'])
+    @login_required
+    @permission_required('action.log.delete.any')
+    def api_log_clear_day():
+        body = request.get_json() or {}
+        dk = str(body.get('date', '')).strip()
+        emp = str(body.get('employee', '')).strip()
+        if not _valid_date(dk):
+            return jsonify({'success': False, 'error': 'Некорректная дата'}), 400
+        n = db.clear_day_logs(dk, emp)
+        _audit(db, current_user(db), 'delete', 'log_clear', dk,
+               {'employee': emp, 'count': n})
+        return jsonify({'success': True, 'deleted': n})
+
+    # ============================================================
+    # API: HOLIDAYS
+    # ============================================================
+    @app.route('/api/tracker/holiday/save', methods=['POST'])
+    @login_required
+    @permission_required('tab.settings')
+    def api_holiday_save():
+        body = request.get_json() or {}
+        dk = str(body.get('date', '')).strip()
+        name = str(body.get('name', '')).strip()[:100] or 'Праздник'
+        if not _valid_date(dk):
+            return jsonify({'success': False, 'error': 'Некорректная дата'}), 400
+        db.set_holiday(dk, name)
+        _audit(db, current_user(db), 'update', 'holiday', dk, {'name': name})
+        return jsonify({'success': True})
+
+    @app.route('/api/tracker/holiday/delete', methods=['POST'])
+    @login_required
+    @permission_required('tab.settings')
+    def api_holiday_delete():
+        dk = str((request.get_json() or {}).get('date', '')).strip()
+        if not _valid_date(dk):
+            return jsonify({'success': False, 'error': 'Некорректная дата'}), 400
+        db.delete_holiday(dk)
+        _audit(db, current_user(db), 'delete', 'holiday', dk, {})
+        return jsonify({'success': True})
+
+    # ============================================================
+    # API: CALENDAR
+    # ============================================================
+    @app.route('/api/tracker/export/debtors')
+    @login_required
+    def api_export_debtors():
+        from datetime import date
+        from flask import send_file
+        try:
+            import openpyxl
+            from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+        except ImportError:
+            return jsonify({'success': False, 'error': 'openpyxl не установлен: pip install openpyxl'}), 500
+        d = (request.args.get('date') or '').strip() or date.today().strftime('%Y-%m-%d')
+        dept_id = request.args.get('department', '')
+        team_id = request.args.get('team', '')
+        data = db.load_all()
+        employees = list(data.get('employees', []))
+        teams = data.get('teams', [])
+        all_logs = data.get('log', [])
+        emp_team = {}
+        for t in teams:
+            for mid in (t.get('member_ids') or []):
+                emp_team.setdefault(mid, t.get('name'))
+            if t.get('manager_id'):
+                emp_team.setdefault(t['manager_id'], t.get('name'))
+        if dept_id:
+            employees = [e for e in employees if e.get('department_id') == dept_id]
+        if team_id:
+            member_ids = set()
+            for t in teams:
+                if t['id'] == team_id:
+                    member_ids.update(t.get('member_ids') or [])
+                    if t.get('manager_id'):
+                        member_ids.add(t['manager_id'])
+            employees = [e for e in employees if e['id'] in member_ids]
+        reported = set()
+        for l in all_logs:
+            if l.get('date') == d:
+                reported.add(l.get('employee_id'))
+        debtors = [e for e in employees if not e.get('fired') and e['id'] not in reported]
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = 'Не заполнили отчёт'
+        header_fill = PatternFill('solid', fgColor='C0392B')
+        header_font = Font(bold=True, color='FFFFFF')
+        thin = Side(style='thin', color='CCCCCC')
+        border = Border(left=thin, right=thin, top=thin, bottom=thin)
+        ws.merge_cells('A1:D1')
+        ws['A1'] = f'Не заполнили отчёт за {d}'
+        ws['A1'].font = Font(bold=True, size=14)
+        ws['A1'].alignment = Alignment(horizontal='center')
+        for ci, h in enumerate(['№', 'ФИО', 'Отдел', 'Команда'], start=1):
+            c = ws.cell(row=3, column=ci, value=h)
+            c.font = header_font
+            c.fill = header_fill
+            c.border = border
+            c.alignment = Alignment(horizontal='center')
+        row = 4
+        for i, e in enumerate(debtors, start=1):
+            ws.cell(row=row, column=1, value=i).border = border
+            ws.cell(row=row, column=2, value=e.get('name', '')).border = border
+            ws.cell(row=row, column=3, value=e.get('department', '')).border = border
+            ws.cell(row=row, column=4, value=emp_team.get(e['id'], '')).border = border
+            row += 1
+        total_active = len([e for e in employees if not e.get('fired')])
+        ws.cell(row=row + 1, column=2, value=f'Итого: {len(debtors)} из {total_active} не заполнили').font = Font(bold=True)
+        ws.column_dimensions['A'].width = 6
+        ws.column_dimensions['B'].width = 30
+        ws.column_dimensions['C'].width = 20
+        ws.column_dimensions['D'].width = 20
+        from io import BytesIO
+        output = BytesIO()
+        wb.save(output)
+        output.seek(0)
+        return send_file(output, mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', as_attachment=True, download_name=f'debtors_{d}.xlsx')
+
+    @app.route('/api/tracker/calendar/export')
+    @login_required
+    def api_calendar_export_excel():
+        from datetime import date
+        from calendar import monthrange
+        from flask import send_file
+        try:
+            import openpyxl
+            from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+            from openpyxl.utils import get_column_letter
+        except ImportError:
+            return jsonify({'success': False, 'error': 'openpyxl не установлен: pip install openpyxl'}), 500
+        try:
+            year = int(request.args.get('year', date.today().year))
+            month = int(request.args.get('month', date.today().month))
+        except (ValueError, TypeError):
+            year, month = date.today().year, date.today().month
+        _, days_in_month = monthrange(year, month)
+        start_date = f'{year}-{month:02d}-01'
+        end_date = f'{year}-{month:02d}-{days_in_month:02d}'
+        dept_id = request.args.get('department', '')
+        team_id = request.args.get('team', '')
+        emp_id = request.args.get('employee', '')
+        data = db.load_all(since=start_date)
+        employees = list(data.get('employees', []))
+        tasks_by_id = {t['id']: t for t in data.get('tasks', [])}
+        teams = data.get('teams', [])
+        holidays = data.get('holidays', {})
+        all_logs = data.get('log', [])
+        if dept_id:
+            employees = [e for e in employees if e.get('department_id') == dept_id]
+        if team_id:
+            member_ids = set()
+            for t in teams:
+                if t['id'] == team_id:
+                    member_ids.update(t.get('member_ids') or [])
+                    if t.get('manager_id'):
+                        member_ids.add(t['manager_id'])
+            employees = [e for e in employees if e['id'] in member_ids]
+        if emp_id:
+            employees = [e for e in employees if e['id'] == emp_id]
+        logs_by_emp = {}
+        for l in all_logs:
+            if l['date'] > end_date:
+                continue
+            logs_by_emp.setdefault(l['employee_id'], {}).setdefault(l['date'], []).append(l)
+        ABSENCE_ICON = {'vacation': '🏖', 'sick_leave': '🤒', 'business_trip': '✈️', 'remote': '🏠'}
+        STATUS_FILL_HEX = {'done': 'C8E6C9', 'in_progress': 'DCEDC8', 'planned': 'E0E0E0', 'blocked': 'FFCDD2'}
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = f'Календарь {month:02d}.{year}'
+        total_cols = days_in_month + 2
+        ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=total_cols)
+        ws['A1'] = f'Календарь задач: {month:02d}.{year}'
+        ws['A1'].font = Font(bold=True, size=14)
+        ws['A1'].alignment = Alignment(horizontal='center')
+        header_fill = PatternFill('solid', fgColor='2C3E50')
+        header_font = Font(bold=True, color='FFFFFF')
+        header_align = Alignment(horizontal='center', vertical='center', wrap_text=True)
+        thin = Side(style='thin', color='CCCCCC')
+        thin_border = Border(left=thin, right=thin, top=thin, bottom=thin)
+        for c, val in ((1, 'Сотрудник'), (2, 'Отдел')):
+            cell = ws.cell(row=3, column=c, value=val)
+            cell.font = header_font
+            cell.fill = header_fill
+            cell.alignment = header_align
+            cell.border = thin_border
+        WD = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс']
+        today = date.today()
+        for day in range(1, days_in_month + 1):
+            col = day + 2
+            d = date(year, month, day)
+            cell = ws.cell(row=3, column=col, value=f'{day:02d}\n{WD[d.weekday()]}')
+            cell.font = header_font
+            cell.fill = header_fill
+            cell.alignment = header_align
+            cell.border = thin_border
+            ds = d.strftime('%Y-%m-%d')
+            if ds in holidays:
+                cell.fill = PatternFill('solid', fgColor='FFE0E0')
+            elif d.weekday() >= 5:
+                cell.fill = PatternFill('solid', fgColor='EEEEEE')
+            if d == today:
+                cell.fill = PatternFill('solid', fgColor='C8E6C9')
+        row = 4
+        total_tasks = {day: 0 for day in range(1, days_in_month + 1)}
+        total_hours = {day: 0.0 for day in range(1, days_in_month + 1)}
+        for emp in employees:
+            ws.cell(row=row, column=1, value=emp.get('name', '')).font = Font(bold=True)
+            ws.cell(row=row, column=1).border = thin_border
+            ws.cell(row=row, column=2, value=emp.get('department', '')).border = thin_border
+            emp_logs = logs_by_emp.get(emp['id'], {})
+            emp_vacs = emp.get('vacations', [])
+            for day in range(1, days_in_month + 1):
+                col = day + 2
+                ds = date(year, month, day).strftime('%Y-%m-%d')
+                cell = ws.cell(row=row, column=col)
+                cell.border = thin_border
+                cell.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
+                vac = None
+                for v in emp_vacs:
+                    if v.get('from', '') <= ds <= v.get('to', ''):
+                        vac = v
+                        break
+                if vac:
+                    cell.value = ABSENCE_ICON.get(vac.get('type', 'vacation'), '📅')
+                    cell.font = Font(size=14)
+                    cell.fill = PatternFill('solid', fgColor='BBDEFB')
+                elif ds in emp_logs:
+                    logs = emp_logs[ds]
+                    first_status = (logs[0].get('status') or 'planned')
+                    cnt = len(logs)
+                    hrs = sum(float(l.get('hours') or 0) for l in logs)
+                    txt = f'{cnt} задач' if cnt > 1 else '1 задача'
+                    if hrs > 0:
+                        txt += f'\n{hrs:g}ч'
+                    cell.value = txt
+                    cell.fill = PatternFill('solid', fgColor=STATUS_FILL_HEX.get(first_status, 'F5F5F5'))
+                    total_tasks[day] += cnt
+                    total_hours[day] += hrs
+                else:
+                    cell.value = ''
+            row += 1
+        ws.cell(row=row, column=1, value='ИТОГО').font = Font(bold=True, size=11)
+        for c in (1, 2):
+            ws.cell(row=row, column=c).fill = PatternFill('solid', fgColor='FDEBD0')
+            ws.cell(row=row, column=c).border = thin_border
+        for day in range(1, days_in_month + 1):
+            col = day + 2
+            cell = ws.cell(row=row, column=col)
+            cell.border = thin_border
+            cell.fill = PatternFill('solid', fgColor='FDEBD0')
+            cell.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
+            if total_tasks[day] > 0:
+                cell.value = f'{total_tasks[day]}\n{total_hours[day]:g}ч'
+        ws.column_dimensions['A'].width = 25
+        ws.column_dimensions['B'].width = 16
+        for day in range(1, days_in_month + 1):
+            ws.column_dimensions[get_column_letter(day + 2)].width = 9
+        ws.row_dimensions[3].height = 40
+        for r in range(4, row + 1):
+            ws.row_dimensions[r].height = 38
+        from io import BytesIO
+        output = BytesIO()
+        wb.save(output)
+        output.seek(0)
+        filename = f'calendar_{year}_{month:02d}.xlsx'
+        return send_file(output, mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', as_attachment=True, download_name=filename)
+
+
+    @app.route('/api/tracker/calendar', methods=['GET'])
+    @login_required
+    @permission_required('tab.calendar')
+    def api_calendar():
+        u = current_user(db)
+        perms = effective_permissions(db, u)
+        ym = request.args.get('ym', '').strip()
+        emp_filter = request.args.get('employee', '').strip()
+        dept_filter_raw = request.args.get('department', '').strip()
+        dept_ids = [x.strip() for x in dept_filter_raw.split(',') if x.strip()] if dept_filter_raw else []
+        team_filter = request.args.get('team', '').strip()
+        y, m = _parse_ym(ym)
+        first = date(y, m, 1)
+        last = date(y, m, monthrange(y, m)[1])
+        start = first - timedelta(days=first.weekday())
+        end = last + timedelta(days=(6 - last.weekday()))
+        # PATCH v1.0.7: грузим логи только за видимый период
+        data = _data(db, since=start.strftime('%Y-%m-%d'))
+        today = date.today().strftime('%Y-%m-%d')
+        holidays = data['holidays']
+
+        team_ids = _team_filter_emp_ids(data, team_filter)
+        emps = data['employees']
+        if dept_ids:
+            emps = [e for e in emps if e.get('department_id') in dept_ids]
+        if team_ids is not None:
+            emps = [e for e in emps if e['id'] in team_ids]
+        if emp_filter:
+            emps = [e for e in emps if e['id'] == emp_filter]
+
+        if not perms.get('block.calendar.other_employees'):
+            my_emp = u.get('employee_id') or ''
+            if emp_filter:
+                if emp_filter != my_emp:
+                    emps = []
+            else:
+                emps = [e for e in emps if e['id'] == my_emp] if my_emp else []
+
+        allowed = {e['id'] for e in emps}
+        em = {e['id']: e for e in data['employees']}
+        tm = {t['id']: t for t in data['tasks']}
+
+        days = {}
+        cur = start
+        while cur <= end:
+            dk = cur.strftime('%Y-%m-%d')
+            vac = [e['id'] for e in emps if _in_vacation(e, dk)]
+            rem = [e['id'] for e in emps if _is_remote(e, dk)]
+            is_hol = dk in holidays
+            is_wknd = cur.weekday() >= 5
+            days[dk] = {
+                'date': dk, 'in_month': (cur.month == m and cur.year == y),
+                'weekday': cur.weekday(),
+                'is_workday': (cur.weekday() in WORK_WEEKDAYS) and not is_hol,
+                'is_weekend': is_wknd, 'is_holiday': bool(is_hol),
+                'holiday_name': holidays.get(dk, ''),
+                'entries': [], 'total_hours': 0.0,
+                'employees': [], 'missing': [], 'vacation': vac, 'remote': rem,
+                'overdue_tasks': [], 'not_started': [],
+            }
+            cur += timedelta(days=1)
+
+        for l in data['log']:
+            ldate = l.get('date', '')
+            if ldate not in days:
+                continue
+            if l.get('employee_id') not in allowed:
+                continue
+            e = em.get(l.get('employee_id')) or {
+                'id': l.get('employee_id'), 'name': '— удалён —', 'color': '#888888'
+            }
+            t = tm.get(l.get('task_id')) or {
+                'id': l.get('task_id'), 'name': '— удалена —', 'icon': '❓'
+            }
+            entry = {
+                'id': l.get('id'),
+                'employee_id': e['id'],
+                'employee_name': e.get('name', ''),
+                'employee_color': e.get('color', '#888'),
+                'employee_department': e.get('department', ''),
+                'task_id': t['id'],
+                'task_name': t.get('name', ''),
+                'task_icon': t.get('icon', '📋'),
+                'task_start_date': t.get('start_date', ''),
+                'task_deadline': t.get('deadline', ''),
+                'task_created_at': t.get('created_at', ''),
+                'task_tags': list(t.get('tags') or []),
+                'hours': float(l.get('hours', 0) or 0),
+                'comment': l.get('comment', ''),
+                'status': l.get('status', 'done'),
+                'status_label': STATUS_LABELS.get(l.get('status', 'done'), ''),
+                'link': l.get('link', ''),
+                'overdue': _is_overdue(t, today),
+                'extra_data': l.get('extra_data') or [],
+                'orders': l.get('orders') or [],
+                'links': l.get('links') or [],
+            }
+            days[ldate]['entries'].append(entry)
+            days[ldate]['total_hours'] += entry['hours']
+            if e['id'] not in days[ldate]['employees']:
+                days[ldate]['employees'].append(e['id'])
+
+        for t in data['tasks']:
+            if not _is_overdue(t, today):
+                continue
+            dl = t.get('deadline', '')
+            if dl in days:
+                days[dl]['overdue_tasks'].append({
+                    'id': t['id'], 'name': t.get('name', ''), 'icon': t.get('icon', '📋'),
+                })
+
+        for dk, day in days.items():
+            if not day['is_workday'] or dk > today:
+                continue
+            for e in emps:
+                if e['id'] in day['employees']:
+                    continue
+                if _absence_type(e, dk):
+                    continue
+                if not _is_active_on(e, dk):
+                    continue
+                if _is_dept_head(e):
+                    continue
+                day['missing'].append({
+                    'id': e['id'], 'name': e.get('name', ''),
+                    'color': e.get('color', '#888'),
+                    'department': e.get('department', ''),
+                })
+
+        task_assignees = {}
+        for _t in data['tasks']:
+            if _t.get('status') not in ('active', 'paused'):
+                continue
+            _aids = [a for a in (_t.get('assignees') or []) if a]
+            if _aids:
+                task_assignees[_t['id']] = _aids
+
+        day_entries_by_emp_task = {}
+        for l in data['log']:
+            ld = l.get('date', '')
+            if ld not in days:
+                continue
+            eid = l.get('employee_id')
+            tid = l.get('task_id')
+            if not eid or not tid:
+                continue
+            day_entries_by_emp_task.setdefault(ld, set()).add((eid, tid))
+
+        emps_by_id = {e['id']: e for e in emps}
+        for dk, day in days.items():
+            if dk > today:
+                continue
+            _day_set = day_entries_by_emp_task.get(dk, set())
+            for t in data['tasks']:
+                if t.get('status') not in ('active', 'paused'):
+                    continue
+                _sd = t.get('start_date') or ''
+                _dl = t.get('deadline') or ''
+                if _sd and dk < _sd:
+                    continue
+                if _dl and dk > _dl:
+                    continue
+                for _aid in task_assignees.get(t['id'], []):
+                    if _aid not in emps_by_id:
+                        continue
+                    if (_aid, t['id']) in _day_set:
+                        continue
+                    _e = emps_by_id[_aid]
+                    # PATCH v1.0.3: до найма задачи не считаем «назначено, не начато»
+                    if not _is_active_on(_e, dk):
+                        continue
+                    day['not_started'].append({
+                        'employee_id': _aid,
+                        'employee_name': _e.get('name', ''),
+                        'employee_color': _e.get('color', '#888'),
+                        'task_id': t['id'],
+                        'task_name': t.get('name', ''),
+                        'task_icon': t.get('icon', '📋'),
+                        'deadline': _dl,
+                        # PATCH v1.0.18: метка для приоритета/подсветки
+                        'is_urgent': bool(t.get('is_urgent')),
+                    })
+            day['not_started'] = day['not_started'][:30]
+
+        for dk in days:
+            days[dk]['entries'].sort(key=lambda x: -x['hours'])
+            days[dk]['total_hours'] = round(days[dk]['total_hours'] * 4) / 4
+
+        return jsonify({
+            'success': True, 'year': y, 'month': m,
+            'start': start.strftime('%Y-%m-%d'),
+            'end': end.strftime('%Y-%m-%d'),
+            'days': list(days.values()),
+            'employees': data['employees'],
+            'holidays': holidays,
+        })
+
+    # ============================================================
+    # API: EMPLOYEE / DAY
+    # ============================================================
+    @app.route('/api/tracker/employee/day', methods=['GET'])
+    @login_required
+    @permission_required('tab.calendar')
+    def api_employee_day():
+        emp_id = request.args.get('employee', '').strip()
+        dk = request.args.get('date', '').strip()
+        if not emp_id or not _valid_date(dk):
+            return jsonify({'success': False, 'error': 'Нужны employee и date'}), 400
+        _u = current_user(db)
+        _perms = effective_permissions(db, _u)
+        if not _perms.get('block.calendar.other_employees'):
+            _my = (_u.get('employee_id') or '').strip()
+            if not _my or emp_id != _my:
+                return jsonify({'success': False, 'error': 'forbidden'}), 403
+        data = _data(db)
+        em = {e['id']: e for e in data['employees']}
+        tm = {t['id']: t for t in data['tasks']}
+        emp = em.get(emp_id)
+        if not emp:
+            return jsonify({'success': False, 'error': 'Сотрудник не найден'}), 404
+        today = date.today().strftime('%Y-%m-%d')
+        entries = []
+        total = 0.0
+        for l in data['log']:
+            if l.get('employee_id') != emp_id or l.get('date') != dk:
+                continue
+            t = tm.get(l.get('task_id')) or {
+                'id': l.get('task_id'), 'name': '— удалена —', 'icon': '❓'
+            }
+            entries.append({
+                'id': l.get('id'),
+                'task_id': t['id'],
+                'task_name': t.get('name', ''),
+                'task_icon': t.get('icon', '📋'),
+                'task_start_date': t.get('start_date', ''),
+                'task_deadline': t.get('deadline', ''),
+                'hours': float(l.get('hours', 0) or 0),
+                'comment': l.get('comment', ''),
+                'status': l.get('status', 'done'),
+                'status_label': STATUS_LABELS.get(l.get('status', 'done'), ''),
+                'link': l.get('link', ''),
+                'overdue': _is_overdue(t, today),
+            })
+            total += float(l.get('hours', 0) or 0)
+        entries.sort(key=lambda x: -x['hours'])
+        absence = _absence_type(emp, dk)
+        _is_rem = (absence == 'remote')
+        _is_vac = bool(absence) and not _is_rem
+        return jsonify({
+            'success': True,
+            'employee': {
+                'id': emp['id'], 'name': emp.get('name', ''),
+                'color': emp.get('color', '#888'),
+                'role': emp.get('role', ''),
+                'department': emp.get('department', ''),
+            },
+            'date': dk, 'entries': entries,
+            'total_hours': round(total * 4) / 4,
+            'in_vacation': _is_vac,
+            'is_remote': _is_rem,
+            'absence_type': absence,
+            'absence_label': ABSENCE_TYPES.get(absence, ''),
+            'is_workday': datetime.strptime(dk, '%Y-%m-%d').weekday() in WORK_WEEKDAYS,
+        })
+
+    # ============================================================
+    # API: SUMMARY
+    # ============================================================
+    def _summary_impl(mode):
+        data = _data(db)
+        u = current_user(db)
+        perms = effective_permissions(db, u)
+        date_from = request.args.get('from', '').strip()
+        date_to = request.args.get('to', '').strip()
+        emp_filter = request.args.get('employee', '').strip()
+        task_filter = request.args.get('task', '').strip()
+        dept_filter = request.args.get('department', '').strip()
+        team_filter = request.args.get('team', '').strip()
+        tag_filter = request.args.get('tag', '').strip()
+
+        tag_mode = (request.args.get('tag_mode') or 'any').strip().lower()
+        if tag_mode not in ('any', 'all'):
+            tag_mode = 'any'
+        if tag_filter:
+            wanted_tags = [x.strip() for x in tag_filter.split(',') if x.strip()]
+            if wanted_tags:
+                if tag_mode == 'all':
+                    data['tasks'] = [
+                        t for t in data['tasks']
+                        if all(tag in (t.get('tags') or []) for tag in wanted_tags)
+                    ]
+                else:
+                    data['tasks'] = [
+                        t for t in data['tasks']
+                        if any(tag in (t.get('tags') or []) for tag in wanted_tags)
+                    ]
+                _valid_tag_task_ids = {t['id'] for t in data['tasks']}
+                data['log'] = [l for l in data['log']
+                               if l.get('task_id') in _valid_tag_task_ids]
+
+        if not _valid_date(date_from):
+            date_from = date.today().replace(day=1).strftime('%Y-%m-%d')
+        if not _valid_date(date_to):
+            date_to = date.today().strftime('%Y-%m-%d')
+        df = datetime.strptime(date_from, '%Y-%m-%d').date()
+        dt_ = datetime.strptime(date_to, '%Y-%m-%d').date()
+        if df > dt_:
+            df, dt_ = dt_, df
+
+        all_days = []
+        cur = df
+        while cur <= dt_:
+            all_days.append(cur.strftime('%Y-%m-%d'))
+            cur += timedelta(days=1)
+
+        today = date.today().strftime('%Y-%m-%d')
+        holidays = data['holidays']
+        team_ids = _team_filter_emp_ids(data, team_filter)
+        dept_ids = None
+        if dept_filter:
+            dept_ids = {e['id'] for e in data['employees']
+                        if e.get('department_id') == dept_filter}
+
+        def emp_ok(eid):
+            if team_ids is not None and eid not in team_ids:
+                return False
+            if dept_ids is not None and eid not in dept_ids:
+                return False
+            if not perms.get('block.summary.other_employees'):
+                my_emp = u.get('employee_id') or ''
+                if not my_emp or eid != my_emp:
+                    return False
+            return True
+
+        # PATCH 1.0.5: не учитываем отметки на будущее, если включён флаг
+        try:
+            _ifu = str(db.get_setting('stats_ignore_future', '1')) != '0'
+        except Exception:
+            _ifu = True
+
+        pairs = {}
+        for l in data['log']:
+            ldate = l.get('date', '')
+            if ldate < date_from or ldate > date_to:
+                continue
+            if _ifu and ldate > today:
+                continue
+            eid = l.get('employee_id')
+            tid = l.get('task_id')
+            if emp_filter and eid != emp_filter:
+                continue
+            if not emp_ok(eid):
+                continue
+            if task_filter and tid != task_filter:
+                continue
+            pairs.setdefault((eid, tid), {}).setdefault(ldate, []).append(l)
+
+        assigned = set()
+        for t in data['tasks']:
+            if task_filter and t['id'] != task_filter:
+                continue
+            if dept_filter and not _task_matches_dept(t, dept_filter, dept_ids or set()):
+                continue
+            if not _task_in_period(t, date_from, date_to, today):
+                continue
+            for eid in t.get('assignees', []):
+                if emp_filter and eid != emp_filter:
+                    continue
+                if not emp_ok(eid):
+                    continue
+                assigned.add((eid, t['id']))
+
+        all_pairs = set(pairs.keys()) | assigned
+        by_emp = {}
+        for (eid, tid) in all_pairs:
+            by_emp.setdefault(eid, set()).add(tid)
+
+        em = {e['id']: e for e in data['employees']}
+        tm = {t['id']: t for t in data['tasks']}
+        priority = {'done': 4, 'in_progress': 3, 'blocked': 2, 'planned': 1}
+
+        rows = []
+        for eid, tids in by_emp.items():
+            emp = em.get(eid) or {'id': eid, 'name': '— удалён —', 'color': '#888'}
+            cells = {} if mode != 'grid' else None
+            tasks_rows = [] if mode == 'grid' else None
+            total = 0.0
+            for tid in sorted(tids):
+                t = tm.get(tid) or {'id': tid, 'name': '— удалена —', 'icon': '❓'}
+                day_entries = pairs.get((eid, tid), {})
+                t_cells = {}
+                t_total = 0.0
+                for dk in all_days:
+                    entries = day_entries.get(dk, [])
+                    if not entries:
+                        continue
+                    h = sum(float(e.get('hours', 0) or 0) for e in entries)
+                    statuses = [e.get('status', 'done') for e in entries]
+                    dom = max(statuses, key=lambda s: priority.get(s, 0))
+                    t_cells[dk] = {
+                        'hours': round(h * 4) / 4,
+                        'status': dom,
+                        'status_label': STATUS_LABELS.get(dom, ''),
+                        'entries': [{
+                            'id': e.get('id'),
+                            'comment': e.get('comment', ''),
+                            'status': e.get('status', 'done'),
+                            'status_label': STATUS_LABELS.get(e.get('status', 'done'), ''),
+                            'link': e.get('link', ''),
+                            'hours': float(e.get('hours', 0) or 0),
+                        } for e in entries],
+                    }
+                    t_total += h
+                if mode == 'grid':
+                    emp_ck = _emp_completion_kind(t, data['log'], eid)
+                    tasks_rows.append({
+                        'task_id': tid, 'task_name': t.get('name', ''),
+                        'task_icon': t.get('icon', '📋'),
+                        'task_tags': list(t.get('tags') or []),
+                        'task_status': t.get('status', 'active'),
+                        'start_date': t.get('start_date', ''),
+                        'deadline': t.get('deadline', ''),
+                        'completed_at': t.get('completed_at', ''),
+                        'emp_completed_at': _emp_last_done_date(data['log'], eid, tid),
+                        'completion_kind': emp_ck or _completion_kind(t),
+                        'emp_completion_kind': emp_ck,
+                        'overdue': _emp_is_overdue(t, data['log'], eid, today),
+                        'cells': t_cells,
+                        'total_hours': round(t_total * 4) / 4,
+                    })
+                else:
+                    for dk, c in t_cells.items():
+                        cell = cells.setdefault(dk, {
+                            'date': dk, 'hours': 0.0, 'tasks': []
+                        })
+                        cell['hours'] += c['hours']
+                        cell['tasks'].append({
+                            'task_id': tid, 'task_name': t.get('name', ''),
+                            'task_icon': t.get('icon', '📋'),
+                            'task_tags': list(t.get('tags') or []),
+                            'task_status': t.get('status', 'active'),
+                            'deadline': t.get('deadline', ''),
+                            'overdue': _emp_is_overdue(t, data['log'], eid, today),
+                            'hours': c['hours'],
+                            'entries': c['entries'],
+                        })
+                total += t_total
+
+            if mode == 'grid':
+                tasks_rows.sort(key=lambda x: (-x['total_hours'], x['task_name'].lower()))
+                rows.append({
+                    'employee_id': eid,
+                    'employee_name': emp.get('name', ''),
+                    'employee_color': emp.get('color', '#888'),
+                    'employee_department': emp.get('department', ''),
+                    'tasks': tasks_rows,
+                    'total_hours': round(total * 4) / 4,
+                })
+            else:
+                for dk in cells:
+                    cells[dk]['hours'] = round(cells[dk]['hours'] * 4) / 4
+                    cells[dk]['tasks'].sort(key=lambda x: -x['hours'])
+                rows.append({
+                    'employee_id': eid,
+                    'employee_name': emp.get('name', ''),
+                    'employee_color': emp.get('color', '#888'),
+                    'employee_department': emp.get('department', ''),
+                    'cells': cells,
+                    'total_hours': round(total * 4) / 4,
+                })
+        _emp_order_map = {e['id']: i for i, e in enumerate(data['employees'])}
+        rows.sort(key=lambda r: _emp_order_map.get(r['employee_id'], 999999))
+
+        absences_by_day = {}
+        for e in data['employees']:
+            if not emp_ok(e['id']):
+                continue
+            for v in e.get('vacations', []) or []:
+                vf, vt = v.get('from', ''), v.get('to', '')
+                if not vf or not vt:
+                    continue
+                s = max(vf, date_from)
+                ee = min(vt, date_to)
+                if s > ee:
+                    continue
+                cur_v = datetime.strptime(s, '%Y-%m-%d').date()
+                end_v = datetime.strptime(ee, '%Y-%m-%d').date()
+                while cur_v <= end_v:
+                    absences_by_day.setdefault(e['id'], {})[
+                        cur_v.strftime('%Y-%m-%d')
+                    ] = v.get('type', 'vacation')
+                    cur_v += timedelta(days=1)
+        for r in rows:
+            r['absence_days'] = absences_by_day.get(r['employee_id'], {})
+            r['vacation_days'] = sorted(r['absence_days'].keys())
+
+        day_totals = {dk: 0.0 for dk in all_days}
+        for r in rows:
+            if mode == 'grid':
+                for t in r['tasks']:
+                    for dk, c in t['cells'].items():
+                        if dk in day_totals:
+                            day_totals[dk] += c['hours']
+            else:
+                for dk, cell in r['cells'].items():
+                    if dk in day_totals:
+                        day_totals[dk] += cell['hours']
+        for dk in day_totals:
+            day_totals[dk] = round(day_totals[dk] * 4) / 4
+        grand_total = round(sum(day_totals.values()) * 4) / 4
+
+        for r in rows:
+            if mode == 'grid':
+                r['tasks'].sort(key=lambda x: (
+                    (x['task_tags'][0] if x.get('task_tags') else 'zzz'),
+                    -x['total_hours'],
+                    x['task_name'].lower(),
+                ))
+
+        task_agg = {}
+        for r in rows:
+            if mode == 'grid':
+                for t in r['tasks']:
+                    tid = t['task_id']
+                    if tid not in task_agg:
+                        task_agg[tid] = {
+                            'task_id': tid, 'task_name': t['task_name'],
+                            'task_icon': t['task_icon'], 'hours': 0.0, 'count': 0,
+                        }
+                    task_agg[tid]['hours'] += t['total_hours']
+                    for dk, c in t['cells'].items():
+                        task_agg[tid]['count'] += len(c['entries'])
+            else:
+                for cell in r['cells'].values():
+                    for t in cell['tasks']:
+                        tid = t['task_id']
+                        if tid not in task_agg:
+                            task_agg[tid] = {
+                                'task_id': tid, 'task_name': t['task_name'],
+                                'task_icon': t['task_icon'], 'hours': 0.0, 'count': 0,
+                            }
+                        task_agg[tid]['hours'] += t['hours']
+                        task_agg[tid]['count'] += len(t['entries'])
+        top_tasks = sorted(task_agg.values(), key=lambda x: -x['hours'])[:10]
+        for t in top_tasks:
+            t['hours'] = round(t['hours'] * 4) / 4
+
+        vacations_in_period = []
+        for e in data['employees']:
+            if not emp_ok(e['id']):
+                continue
+            for v in e.get('vacations', []) or []:
+                vf, vt = v.get('from', ''), v.get('to', '')
+                if vt < date_from or vf > date_to:
+                    continue
+                vacations_in_period.append({
+                    'employee_id': e['id'],
+                    'employee_name': e.get('name', ''),
+                    'employee_color': e.get('color', '#888'),
+                    'from': vf, 'to': vt,
+                    'type': v.get('type', 'vacation'),
+                    'type_label': ABSENCE_TYPES.get(v.get('type', 'vacation'), ''),
+                    'comment': v.get('comment', ''),
+                })
+
+        return jsonify({
+            'success': True, 'from': date_from, 'to': date_to,
+            'view': 'grid' if mode == 'grid' else request.args.get('view', 'compact'),
+            'days': all_days, 'rows': rows,
+            'day_totals': day_totals, 'grand_total': grand_total,
+            'top_tasks': top_tasks, 'vacations': vacations_in_period,
+            'day_meta': _day_meta(all_days, holidays, today),
+            'absence_types': ABSENCE_TYPES,
+        })
+
+    @app.route('/api/tracker/summary', methods=['GET'])
+    @login_required
+    @permission_required('tab.summary')
+    def api_summary():
+        return _summary_impl(mode='compact')
+
+    @app.route('/api/tracker/summary_grid', methods=['GET'])
+    @login_required
+    @permission_required('tab.summary')
+    def api_summary_grid():
+        return _summary_impl(mode='grid')
+
+    # ============================================================
+    # API: EMPLOYEE CARD
+    # ============================================================
+    @app.route('/api/tracker/employee/card', methods=['GET'])
+    @login_required
+    def api_employee_card():
+        emp_id = request.args.get('employee', '').strip()
+        if not emp_id:
+            return jsonify({'success': False, 'error': 'Нужен employee'}), 400
+        u = current_user(db)
+        perms = effective_permissions(db, u)
+        if not perms.get('block.summary.other_employees'):
+            my_emp = u.get('employee_id') or ''
+            if not my_emp or emp_id != my_emp:
+                return jsonify({'success': False, 'error': 'forbidden'}), 403
+
+        date_from = request.args.get('from', '').strip()
+        date_to = request.args.get('to', '').strip()
+        if not _valid_date(date_from):
+            date_from = date.today().replace(day=1).strftime('%Y-%m-%d')
+        if not _valid_date(date_to):
+            date_to = date.today().strftime('%Y-%m-%d')
+        df = datetime.strptime(date_from, '%Y-%m-%d').date()
+        dt_ = datetime.strptime(date_to, '%Y-%m-%d').date()
+
+        data = _data(db)
+        em = {e['id']: e for e in data['employees']}
+        tm = {t['id']: t for t in data['tasks']}
+        emp = em.get(emp_id)
+        if not emp:
+            return jsonify({'success': False, 'error': 'Сотрудник не найден'}), 404
+
+        today_d = date.today()
+        today = today_d.strftime('%Y-%m-%d')
+        holidays = data['holidays']
+        # PATCH 1.0.8: не учитываем будущие отметки в статистике карточки
+        try:
+            _ifu_card = str(db.get_setting('stats_ignore_future', '1')) != '0'
+        except Exception:
+            _ifu_card = True
+
+        relevant_tids = set()
+        for t in data['tasks']:
+            if _task_in_period(t, date_from, date_to, today) and emp_id in t.get('assignees', []):
+                relevant_tids.add(t['id'])
+
+        by_date = {}
+        by_task = {}
+        by_task_active = {}
+        for l in data['log']:
+            if l.get('employee_id') != emp_id:
+                continue
+            ldate = l.get('date', '')
+            if not ldate or ldate < date_from or ldate > date_to:
+                continue
+            h = float(l.get('hours', 0) or 0)
+            by_date[ldate] = by_date.get(ldate, 0.0) + h
+            tid = l.get('task_id')
+            by_task.setdefault(tid, {})[ldate] = by_task.get(tid, {}).get(ldate, 0.0) + h
+            if not _ifu_card or ldate <= today:
+                by_task_active.setdefault(tid, {})[ldate] = by_task_active.get(tid, {}).get(ldate, 0.0) + h
+            relevant_tids.add(tid)
+
+        cells = []
+        max_h = 0.0
+        total = 0.0
+        cur = df
+        while cur <= dt_:
+            dk = cur.strftime('%Y-%m-%d')
+            wd = cur.weekday()
+            is_wknd = wd >= 5
+            is_hol = dk in holidays
+            is_wd = (wd in WORK_WEEKDAYS) and not is_hol
+            absence = _absence_type(emp, dk)
+            is_remote = (absence == 'remote')
+            is_vac = bool(absence) and not is_remote
+            h = round(by_date.get(dk, 0.0) * 4) / 4
+            if h > max_h:
+                max_h = h
+            total += h
+            missing = (
+                is_wd and not is_vac and dk <= today and h == 0
+                and _is_active_on(emp, dk) and not _is_dept_head(emp)
+            )
+            cells.append({
+                'date': dk, 'hours': h,
+                'is_workday': is_wd, 'is_weekend': is_wknd,
+                'is_holiday': is_hol, 'holiday_name': holidays.get(dk, ''),
+                'is_vacation': is_vac, 'is_remote': is_remote, 'absence_type': absence,
+                'missing': missing, 'is_today': dk == today,
+            })
+            cur += timedelta(days=1)
+
+        tasks_out = []
+        for tid in relevant_tids:
+            t = tm.get(tid) or {'id': tid, 'name': '— удалена —', 'icon': '❓'}
+            logs_emp = [l for l in data['log']
+                        if l.get('employee_id') == emp_id and l.get('task_id') == tid]
+            ad, pd, cov = _calc_coverage(t, emp, logs_emp, today_d)
+            ts_raw = t.get('start_date') or date_from
+            te_raw = t.get('deadline') or today
+            try:
+                ts = datetime.strptime(ts_raw, '%Y-%m-%d').date()
+            except Exception:
+                ts = df
+            try:
+                te = datetime.strptime(te_raw, '%Y-%m-%d').date()
+            except Exception:
+                te = today_d
+            if t.get('deadline') and _valid_date(t['deadline']) and t['deadline'] < today \
+                    and t.get('status') not in ('done', 'archived'):
+                te = today_d
+            ts_show = max(ts, df)
+            te_show = min(te, dt_)
+            if ts_show > te_show:
+                ts_show, te_show = df, dt_
+            t_cells = []
+            cur = ts_show
+            while cur <= te_show:
+                dk = cur.strftime('%Y-%m-%d')
+                h = round(by_task.get(tid, {}).get(dk, 0.0) * 4) / 4
+                wd = cur.weekday()
+                is_wknd = wd >= 5
+                is_hol = dk in holidays
+                t_cells.append({
+                    'date': dk, 'hours': h,
+                    'is_workday': (wd in WORK_WEEKDAYS) and not is_hol,
+                    'is_weekend': is_wknd, 'is_holiday': is_hol,
+                    'is_today': dk == today,
+                })
+                cur += timedelta(days=1)
+            task_total = sum(by_task_active.get(tid, {}).values())
+            emp_ck = _emp_completion_kind(t, data['log'], emp_id)
+            emp_ca = _emp_last_done_date(data['log'], emp_id, tid)
+            tasks_out.append({
+                'task_id': tid,
+                'task_name': t.get('name', ''),
+                'task_icon': t.get('icon', '📋'),
+                'task_tags': list(t.get('tags') or []),
+                'overdue': _emp_is_overdue(t, data['log'], emp_id, today),
+                'start_date': t.get('start_date', ''),
+                'deadline': t.get('deadline', ''),
+                'completed_at': emp_ca or t.get('completed_at', ''),
+                'emp_completed_at': emp_ca,
+                'completion_kind': emp_ck or _completion_kind(t),
+                'emp_completion_kind': emp_ck,
+                'days_delta': _emp_days_delta(t, data['log'], emp_id),
+                'status': t.get('status', 'active'),
+                'total_hours': round(task_total * 4) / 4,
+                'active_days': ad, 'possible_days': pd, 'coverage': cov,
+                'cells': t_cells,
+            })
+        tasks_out.sort(key=lambda x: (-x['total_hours'], x['task_name'].lower()))
+
+        return jsonify({
+            'success': True, 'from': date_from, 'to': date_to,
+            'employee': {
+                'id': emp['id'], 'name': emp.get('name', ''),
+                'color': emp.get('color', '#888'),
+                'role': emp.get('role', ''),
+                'department': emp.get('department', ''),
+                'fired': emp.get('fired', False),
+                'fired_date': emp.get('fired_date', ''),
+            },
+            'cells': cells, 'tasks': tasks_out,
+            'total_hours': round(total * 4) / 4,
+            'max_hours': max_h,
+        })
+
+    # ============================================================
+    # API: TASK CARD
+    # ============================================================
+    @app.route('/api/tracker/task/card', methods=['GET'])
+    @login_required
+    @permission_required('tab.summary')
+    def api_task_card():
+        task_id = request.args.get('task', '').strip()
+        emp_filter = request.args.get('employee', '').strip()
+        if not task_id:
+            return jsonify({'success': False, 'error': 'Нужен task'}), 400
+        date_from = request.args.get('from', '').strip()
+        date_to = request.args.get('to', '').strip()
+        if not _valid_date(date_from):
+            date_from = date.today().replace(day=1).strftime('%Y-%m-%d')
+        if not _valid_date(date_to):
+            date_to = date.today().strftime('%Y-%m-%d')
+        data = _data(db)
+        em = {e['id']: e for e in data['employees']}
+        tm = {t['id']: t for t in data['tasks']}
+        t = tm.get(task_id)
+        if not t:
+            return jsonify({'success': False, 'error': 'Задача не найдена'}), 404
+        today_d = date.today()
+        today = today_d.strftime('%Y-%m-%d')
+        holidays = data['holidays']
+
+        ts_raw = t.get('start_date') or date_from
+        te_raw = t.get('deadline') or date_to
+        try:
+            ts = datetime.strptime(ts_raw, '%Y-%m-%d').date()
+        except Exception:
+            ts = datetime.strptime(date_from, '%Y-%m-%d').date()
+        try:
+            te = datetime.strptime(te_raw, '%Y-%m-%d').date()
+        except Exception:
+            te = datetime.strptime(date_to, '%Y-%m-%d').date()
+        if t.get('deadline') and _valid_date(t['deadline']) and t['deadline'] < today \
+                and t.get('status') not in ('done', 'archived'):
+            te = today_d
+        df = datetime.strptime(date_from, '%Y-%m-%d').date()
+        dt_ = datetime.strptime(date_to, '%Y-%m-%d').date()
+        ts_show = max(ts, df)
+        te_show = min(te, dt_)
+        if ts_show > te_show:
+            ts_show, te_show = df, dt_
+
+        # PATCH 1.0.8: не учитываем будущие отметки в статистике карточки задачи
+        try:
+            _ifu_tc = str(db.get_setting('stats_ignore_future', '1')) != '0'
+        except Exception:
+            _ifu_tc = True
+        matrix = {}
+        total = 0.0
+        for l in data['log']:
+            if l.get('task_id') != task_id:
+                continue
+            if emp_filter and l.get('employee_id') != emp_filter:
+                continue
+            ldate = l.get('date', '')
+            if not ldate or ldate < date_from or ldate > date_to:
+                continue
+            if _ifu_tc and ldate > today:
+                continue
+            eid = l.get('employee_id')
+            h = float(l.get('hours', 0) or 0)
+            matrix.setdefault(eid, {})
+            matrix[eid][ldate] = matrix[eid].get(ldate, 0.0) + h
+            total += h
+
+        combined = {}
+        for eid, cm in matrix.items():
+            for dk, h in cm.items():
+                combined[dk] = combined.get(dk, 0.0) + h
+
+        comb_cells = []
+        max_h = 0.0
+        cur = ts_show
+        while cur <= te_show:
+            dk = cur.strftime('%Y-%m-%d')
+            h = round(combined.get(dk, 0.0) * 4) / 4
+            if h > max_h:
+                max_h = h
+            wd = cur.weekday()
+            is_wknd = wd >= 5
+            is_hol = dk in holidays
+            comb_cells.append({
+                'date': dk, 'hours': h,
+                'is_workday': (wd in WORK_WEEKDAYS) and not is_hol,
+                'is_weekend': is_wknd, 'is_holiday': is_hol, 'is_today': dk == today,
+            })
+            cur += timedelta(days=1)
+
+        _assigned_ids = list(t.get('assignees') or [])
+        for _aid in _assigned_ids:
+            if _aid and _aid not in matrix:
+                matrix[_aid] = {}
+        rows = []
+        for eid, cm in matrix.items():
+            e = em.get(eid) or {'id': eid, 'name': '— удалён —', 'color': '#888'}
+            tot = sum(cm.values())
+            ad = sum(1 for h in cm.values() if h > 0)
+            emp_ck = _emp_completion_kind(t, data['log'], eid)
+            emp_cells = []
+            cur2 = ts_show
+            while cur2 <= te_show:
+                dk2 = cur2.strftime('%Y-%m-%d')
+                h2 = round(cm.get(dk2, 0.0) * 4) / 4
+                wd2 = cur2.weekday()
+                is_wknd2 = wd2 >= 5
+                is_hol2 = dk2 in holidays
+                emp_cells.append({
+                    'date': dk2, 'hours': h2,
+                    'is_workday': (wd2 in WORK_WEEKDAYS) and not is_hol2,
+                    'is_weekend': is_wknd2,
+                    'is_holiday': is_hol2,
+                    'is_today': dk2 == today,
+                })
+                cur2 += timedelta(days=1)
+            _last_recs = [l for l in data['log']
+                          if l.get('employee_id') == eid and l.get('task_id') == task_id]
+            _last_recs.sort(key=lambda x: ((x.get('date') or ''), (x.get('id') or 0)))
+            _last_status = _last_recs[-1].get('status', '') if _last_recs else ''
+            _assigned = eid in (t.get('assignees') or [])
+            _worked = tot > 0
+            _cov = 0
+            try:
+                _cov = _calc_coverage(t, e, _last_recs, today_d)[2]
+            except Exception:
+                _cov = 0
+            rows.append({
+                'employee_id': eid,
+                'employee_name': e.get('name', ''),
+                'employee_color': e.get('color', '#888'),
+                'employee_department': e.get('department', ''),
+                'total_hours': round(tot * 4) / 4,
+                'active_days': ad,
+                'overdue': _emp_is_overdue(t, data['log'], eid, today),
+                'emp_completed_at': _emp_last_done_date(data['log'], eid, task_id),
+                'emp_completion_kind': emp_ck,
+                'cells': emp_cells,
+                'assigned': bool(_assigned),
+                'worked': bool(_worked),
+                'coverage': _cov,
+                'last_status': _last_status,
+            })
+        rows.sort(key=lambda x: (0 if x.get('worked') else 1, -x['total_hours'], (x.get('employee_name') or '').lower()))
+
+        logs_all = [l for l in data['log'] if l.get('task_id') == task_id]
+        ad_all, pd_all, cov = _calc_coverage(t, None, logs_all, today_d)
+        dd = None
+        ck = _completion_kind(t)
+        if ck and t.get('completed_at') and t.get('deadline'):
+            try:
+                dd = (datetime.strptime(t['completed_at'][:10], '%Y-%m-%d').date()
+                      - datetime.strptime(t['deadline'], '%Y-%m-%d').date()).days
+            except Exception:
+                dd = None
+
+        _feed = []
+        _links_list = []
+        for _l in data['log']:
+            if _l.get('task_id') != task_id:
+                continue
+            _ld = _l.get('date', '')
+            _eid = _l.get('employee_id', '')
+            _e = em.get(_eid) or {}
+            _cm = (_l.get('comment') or '').strip()
+            if _cm:
+                _feed.append({
+                    'date': _ld,
+                    'employee_id': _eid,
+                    'employee_name': _e.get('name', ''),
+                    'employee_color': _e.get('color', '#888'),
+                    'comment': _cm[:1500],
+                    'hours': float(_l.get('hours', 0) or 0),
+                    'status': _l.get('status', ''),
+                    'status_label': STATUS_LABELS.get(_l.get('status', ''), ''),
+                })
+            _lk = (_l.get('link') or '').strip()
+            if _lk:
+                _links_list.append({
+                    'date': _ld,
+                    'employee_name': _e.get('name', ''),
+                    'employee_color': _e.get('color', '#888'),
+                    'link': _lk[:500],
+                })
+        _feed.sort(key=lambda x: x['date'], reverse=True)
+        _links_list.sort(key=lambda x: x['date'], reverse=True)
+        _first_log = min((l.get('date', '') for l in logs_all if l.get('date')), default='')
+        _last_log = max((l.get('date', '') for l in logs_all if l.get('date')), default='')
+        return jsonify({
+            'success': True, 'from': date_from, 'to': date_to,
+            'task': {
+                'id': t['id'], 'name': t.get('name', ''),
+                'icon': t.get('icon', '📋'),
+                'tags': list(t.get('tags') or []),
+                'status': t.get('status', 'active'),
+                'start_date': t.get('start_date', ''),
+                'deadline': t.get('deadline', ''),
+                'completed_at': t.get('completed_at', ''),
+                'auto_closed_at': t.get('auto_closed_at', ''),
+                'completion_kind': ck, 'days_delta': dd,
+                'overdue': _is_overdue(t, today),
+                'description': t.get('description', ''),
+                'folder': t.get('folder', ''),
+                'orders': list(t.get('orders') or []),
+                'links': list(t.get('links') or []),
+                'extra_meta': list(t.get('extra_meta') or []),
+            },
+            'cells': comb_cells, 'max_hours': max_h,
+            'employees': rows,
+            'total_hours': round(total * 4) / 4,
+            'active_days': ad_all, 'possible_days': pd_all, 'coverage': cov,
+            'feed': _feed[:80],
+            'links': _links_list[:40],
+            'first_log': _first_log,
+            'last_log': _last_log,
+        })
+
+    # ============================================================
+    # API: STATS
+    # ============================================================
+    @app.route('/api/tracker/stats', methods=['GET'])
+    @login_required
+    @permission_required('tab.stats')
+    def api_stats():
+        data = _data(db)
+        u = current_user(db)
+        perms = effective_permissions(db, u)
+        date_from = request.args.get('from', '').strip()
+        date_to = request.args.get('to', '').strip()
+        emp_filter = request.args.get('employee', '').strip()
+        dept_filter = request.args.get('department', '').strip()
+        team_filter = request.args.get('team', '').strip()
+        tag_filter = request.args.get('tag', '').strip()
+
+        tag_mode = (request.args.get('tag_mode') or 'any').strip().lower()
+        if tag_mode not in ('any', 'all'):
+            tag_mode = 'any'
+        if tag_filter:
+            wanted_tags = [x.strip() for x in tag_filter.split(',') if x.strip()]
+            if wanted_tags:
+                if tag_mode == 'all':
+                    data['tasks'] = [
+                        t for t in data['tasks']
+                        if all(tag in (t.get('tags') or []) for tag in wanted_tags)
+                    ]
+                else:
+                    data['tasks'] = [
+                        t for t in data['tasks']
+                        if any(tag in (t.get('tags') or []) for tag in wanted_tags)
+                    ]
+                _valid_tag_task_ids = {t['id'] for t in data['tasks']}
+                data['log'] = [l for l in data['log']
+                               if l.get('task_id') in _valid_tag_task_ids]
+
+        if not _valid_date(date_from):
+            date_from = date.today().replace(day=1).strftime('%Y-%m-%d')
+        if not _valid_date(date_to):
+            date_to = date.today().strftime('%Y-%m-%d')
+        df = datetime.strptime(date_from, '%Y-%m-%d').date()
+        dt_ = datetime.strptime(date_to, '%Y-%m-%d').date()
+        if df > dt_:
+            df, dt_ = dt_, df
+        today = date.today().strftime('%Y-%m-%d')
+        team_ids = _team_filter_emp_ids(data, team_filter)
+
+        em = {e['id']: e for e in data['employees']}
+        tm = {t['id']: t for t in data['tasks']}
+
+        emp_ids = set()
+        for e in data['employees']:
+            if emp_filter and e['id'] != emp_filter:
+                continue
+            if dept_filter and e.get('department_id', '') != dept_filter:
+                continue
+            if team_ids is not None and e['id'] not in team_ids:
+                continue
+            if not perms.get('block.stats.other_employees'):
+                my_emp = u.get('employee_id') or ''
+                if not my_emp or e['id'] != my_emp:
+                    continue
+            if e.get('fired') and e.get('fired_date') and e['fired_date'] <= date_from:
+                continue
+            emp_ids.add(e['id'])
+
+        def log_in_period(l):
+            e = em.get(l.get('employee_id'))
+            if not e:
+                return True
+            dk = l.get('date', '')
+            if not dk:
+                return False
+            return _is_active_on(e, dk)
+
+        # PATCH 1.0.5: не учитываем отметки на будущее, если включён флаг
+        try:
+            _ifu_stats = str(db.get_setting('stats_ignore_future', '1')) != '0'
+        except Exception:
+            _ifu_stats = True
+        _today_stats = date.today().strftime('%Y-%m-%d')
+        logs_period = [l for l in data['log']
+                       if date_from <= l.get('date', '') <= date_to
+                       and (not _ifu_stats or (l.get('date', '') <= _today_stats))
+                       and l.get('employee_id') in emp_ids
+                       and log_in_period(l)]
+        hours_by_emp = {}
+        for l in logs_period:
+            eid = l['employee_id']
+            hours_by_emp[eid] = hours_by_emp.get(eid, 0.0) + float(l.get('hours', 0) or 0)
+
+        by_employee = []
+        for e in data['employees']:
+            if e['id'] not in emp_ids:
+                continue
+            eid = e['id']
+            task_ids = {t['id'] for t in data['tasks'] if eid in t.get('assignees', [])}
+            task_ids |= {l.get('task_id') for l in logs_period
+                         if l.get('employee_id') == eid}
+            tasks_rel = [tm[tid] for tid in task_ids if tid in tm]
+            emp_logs_all = [l for l in data['log'] if l.get('employee_id') == eid]
+
+            done_cnt = active_cnt = overdue_cnt = 0
+            early_ids = set(); late_ids = set(); on_time_ids = set()
+            for t in tasks_rel:
+                if _emp_done_task(t, emp_logs_all, eid):
+                    done_cnt += 1
+                elif t.get('status') == 'active':
+                    active_cnt += 1
+                if _emp_is_overdue(t, emp_logs_all, eid, today):
+                    overdue_cnt += 1
+                k = _emp_completion_kind(t, emp_logs_all, eid)
+                if k == 'early':
+                    early_ids.add(t['id'])
+                elif k == 'late':
+                    late_ids.add(t['id'])
+                elif k == 'on_time':
+                    on_time_ids.add(t['id'])
+
+            wdone = set(); wprog = set()
+            for l in logs_period:
+                if l.get('employee_id') != eid:
+                    continue
+                st = l.get('status', 'done')
+                if st == 'done':
+                    wdone.add(l.get('task_id'))
+                elif st == 'in_progress':
+                    wprog.add(l.get('task_id'))
+
+            vac_d = sick_d = trip_d = 0
+            for v in e.get('vacations', []) or []:
+                vf, vt = v.get('from', ''), v.get('to', '')
+                if not vf or not vt:
+                    continue
+                s = max(vf, date_from)
+                ee = min(vt, date_to)
+                if s <= ee:
+                    days = (datetime.strptime(ee, '%Y-%m-%d')
+                            - datetime.strptime(s, '%Y-%m-%d')).days + 1
+                    vt_type = v.get('type', 'vacation')
+                    if vt_type == 'sick_leave':
+                        sick_d += days
+                    elif vt_type == 'business_trip':
+                        trip_d += days
+                    else:
+                        vac_d += days
+
+            by_employee.append({
+                'employee_id': eid,
+                'employee_name': e.get('name', ''),
+                'employee_color': e.get('color', '#888'),
+                'employee_department': e.get('department', ''),
+                'employee_fired': bool(e.get('fired')),
+                'employee_fired_date': e.get('fired_date', ''),
+                'hours': round(hours_by_emp.get(eid, 0.0) * 4) / 4,
+                'total_tasks': len(tasks_rel),
+                'done_tasks': done_cnt,
+                'active_tasks': active_cnt,
+                'overdue_tasks': overdue_cnt,
+                'worked_done': len(wdone),
+                'worked_in_progress': len(wprog),
+                'early_done': len(early_ids),
+                'late_done': len(late_ids),
+                'on_time_done': len(on_time_ids),
+                'vacation_days': vac_d,
+                'sick_days': sick_d,
+                'business_trip_days': trip_d,
+            })
+        _emp_order_map = {e['id']: i for i, e in enumerate(data['employees'])}
+        by_employee.sort(key=lambda r: _emp_order_map.get(r['employee_id'], 999999))
+
+        by_task = []
+        for t in data['tasks']:
+            tid = t['id']
+            assigned_f = [a for a in t.get('assignees', []) if a in emp_ids]
+            logs_t = [l for l in logs_period if l.get('task_id') == tid]
+            if dept_filter:
+                dept_ids = {e['id'] for e in data['employees']
+                            if e.get('department_id') == dept_filter}
+                if not _task_matches_dept(t, dept_filter, dept_ids):
+                    if not assigned_f and not logs_t:
+                        continue
+            if not assigned_f and not logs_t:
+                continue
+            workers = {l['employee_id'] for l in logs_t}
+            total_h = sum(float(l.get('hours', 0) or 0) for l in logs_t)
+            any_done = any(l.get('status') == 'done' for l in logs_t)
+            any_ip = any(l.get('status') == 'in_progress' for l in logs_t)
+            ck = _completion_kind(t)
+            closed_by = []
+            for a in assigned_f:
+                alogs = [l for l in data['log'] if l.get('employee_id') == a]
+                if _emp_closed_task(alogs, a, tid):
+                    closed_by.append(a)
+            by_task.append({
+                'task_id': tid, 'task_name': t.get('name', ''),
+                'task_icon': t.get('icon', '📋'),
+                'task_tags': list(t.get('tags') or []),
+                'status': t.get('status', 'active'),
+                'deadline': t.get('deadline', ''),
+                'completed_at': t.get('completed_at', ''),
+                'completion_kind': ck,
+                'overdue': _is_overdue(t, today),
+                'assigned_count': len(assigned_f),
+                'workers_count': len(workers),
+                'closed_by_count': len(closed_by),
+                'hours': round(total_h * 4) / 4,
+                'any_done': any_done,
+                'any_in_progress': any_ip,
+            })
+        by_task.sort(key=lambda r: -r['hours'])
+
+        overall = {
+            'employees_count': len(by_employee),
+            'tasks_total': sum(r['total_tasks'] for r in by_employee),
+            'tasks_done': sum(r['done_tasks'] for r in by_employee),
+            'tasks_active': sum(r['active_tasks'] for r in by_employee),
+            'tasks_overdue': sum(r['overdue_tasks'] for r in by_employee),
+            'early_done': sum(r['early_done'] for r in by_employee),
+            'late_done': sum(r['late_done'] for r in by_employee),
+            'on_time_done': sum(r['on_time_done'] for r in by_employee),
+            'hours_total': round(sum(r['hours'] for r in by_employee) * 4) / 4,
+            'vacation_days': sum(r['vacation_days'] for r in by_employee),
+            'sick_days': sum(r['sick_days'] for r in by_employee),
+            'business_trip_days': sum(r['business_trip_days'] for r in by_employee),
+        }
+
+        overdue_details = []
+        if perms.get('block.stats.overdue'):
+            for t in data['tasks']:
+                assigned = [e for e in data['employees']
+                            if e['id'] in t.get('assignees', [])]
+                if not perms.get('block.stats.other_employees') and u.get('employee_id'):
+                    assigned = [e for e in assigned if e['id'] == u['employee_id']]
+                if dept_filter:
+                    assigned = [e for e in assigned
+                                if e.get('department_id') == dept_filter]
+                if team_ids is not None:
+                    assigned = [e for e in assigned if e['id'] in team_ids]
+                if emp_filter:
+                    assigned = [e for e in assigned if e['id'] == emp_filter]
+                if (emp_filter or dept_filter or team_filter) and not assigned:
+                    continue
+                overdue_emps = []
+                for e in assigned:
+                    elogs = [l for l in data['log'] if l.get('employee_id') == e['id']]
+                    if _emp_is_overdue(t, elogs, e['id'], today):
+                        overdue_emps.append(e)
+                if not overdue_emps:
+                    continue
+                try:
+                    days_ov = (date.today() - datetime.strptime(
+                        t.get('deadline', ''), '%Y-%m-%d').date()).days
+                except Exception:
+                    days_ov = 0
+                overdue_details.append({
+                    'task_id': t['id'], 'task_name': t.get('name', ''),
+                    'task_icon': t.get('icon', '📋'),
+                    'deadline': t.get('deadline', ''),
+                    'days_overdue': days_ov,
+                    'status': t.get('status', 'active'),
+                    'assignees': [{
+                        'id': e['id'], 'name': e.get('name', ''),
+                        'color': e.get('color', '#888'),
+                    } for e in overdue_emps],
+                })
+            overdue_details.sort(key=lambda x: -x['days_overdue'])
+
+        tag_stats = {}
+        for t in data['tasks']:
+            for tag in (t.get('tags') or []):
+                ts = tag_stats.setdefault(tag, {
+                    'tag': tag, 'tasks': 0, 'hours': 0.0,
+                    'done': 0, 'overdue': 0,
+                })
+                ts['tasks'] += 1
+                if t.get('status') == 'done':
+                    ts['done'] += 1
+                if _is_overdue(t, today):
+                    ts['overdue'] += 1
+        task_tag_map = {t['id']: (t.get('tags') or []) for t in data['tasks']}
+        for l in logs_period:
+            tid = l.get('task_id')
+            h = float(l.get('hours', 0) or 0)
+            for tag in task_tag_map.get(tid, []):
+                tag_stats[tag]['hours'] += h
+        for v in tag_stats.values():
+            v['hours'] = round(v['hours'] * 4) / 4
+        tags_summary = sorted(tag_stats.values(), key=lambda x: -x['hours'])
+
+        all_days_stats = []
+        curd = df
+        while curd <= dt_:
+            all_days_stats.append(curd.strftime('%Y-%m-%d'))
+            curd += timedelta(days=1)
+        hours_by_day = {dk: 0.0 for dk in all_days_stats}
+        for l in logs_period:
+            dk = l.get('date', '')
+            if dk in hours_by_day:
+                hours_by_day[dk] += float(l.get('hours', 0) or 0)
+        hours_series = [
+            {'date': dk, 'hours': round(hours_by_day[dk] * 4) / 4}
+            for dk in all_days_stats
+        ]
+
+        return jsonify({
+            'success': True, 'from': date_from, 'to': date_to,
+            'by_employee': by_employee, 'by_task': by_task,
+            'overall': overall, 'overdue_details': overdue_details,
+            'tags_summary': tags_summary,
+            'hours_series': hours_series,
+            'absence_types': ABSENCE_TYPES,
+        })
+
+    # ============================================================
+    # API: HEATMAP
+    # ============================================================
+    @app.route('/api/tracker/heatmap', methods=['GET'])
+    @login_required
+    @permission_required('tab.heatmap')
+    def api_heatmap():
+        u = current_user(db)
+        perms = effective_permissions(db, u)
+        # PATCH v1.0.46: мультивыбор отделов + периоды
+        dept_filter_raw = request.args.get('department', '').strip()
+        dept_ids = [x.strip() for x in dept_filter_raw.split(',') if x.strip()] if dept_filter_raw else []
+        team_filter = request.args.get('team', '').strip()
+        ym = request.args.get('ym', '').strip()
+        date_from = request.args.get('from', '').strip()
+        date_to = request.args.get('to', '').strip()
+        period = (request.args.get('period') or '').strip().lower()
+        anchor = (request.args.get('anchor') or '').strip()
+        if period in ('year', 'quarter', 'month', 'week') and _valid_date(anchor):
+            _a = datetime.strptime(anchor, '%Y-%m-%d').date()
+            if period == 'year':
+                date_from = f'{_a.year:04d}-01-01'
+                date_to = f'{_a.year:04d}-12-31'
+            elif period == 'quarter':
+                _q = (_a.month - 1) // 3 + 1
+                _m1 = (_q - 1) * 3 + 1
+                _m3 = _m1 + 2
+                date_from = f'{_a.year:04d}-{_m1:02d}-01'
+                _last = monthrange(_a.year, _m3)[1]
+                date_to = f'{_a.year:04d}-{_m3:02d}-{_last:02d}'
+            elif period == 'month':
+                _last = monthrange(_a.year, _a.month)[1]
+                date_from = f'{_a.year:04d}-{_a.month:02d}-01'
+                date_to = f'{_a.year:04d}-{_a.month:02d}-{_last:02d}'
+            elif period == 'week':
+                _mon = _a - timedelta(days=_a.weekday())
+                _sun = _mon + timedelta(days=6)
+                date_from = _mon.strftime('%Y-%m-%d')
+                date_to = _sun.strftime('%Y-%m-%d')
+        if not _valid_date(date_from) or not _valid_date(date_to):
+            y, m = _parse_ym(ym or date.today().strftime('%Y-%m'))
+            last = monthrange(y, m)[1]
+            date_from = f'{y:04d}-{m:02d}-01'
+            date_to = f'{y:04d}-{m:02d}-{last:02d}'
+        # PATCH v1.0.7: грузим логи только за видимый период
+        data = _data(db, since=date_from)
+        df = datetime.strptime(date_from, '%Y-%m-%d').date()
+        dt_ = datetime.strptime(date_to, '%Y-%m-%d').date()
+        today = date.today().strftime('%Y-%m-%d')
+        holidays = data['holidays']
+        team_ids = _team_filter_emp_ids(data, team_filter)
+
+        all_days = []
+        cur = df
+        while cur <= dt_:
+            all_days.append(cur.strftime('%Y-%m-%d'))
+            cur += timedelta(days=1)
+
+        emps = data['employees']
+        if dept_ids:
+            emps = [e for e in emps if e.get('department_id') in dept_ids]
+        if team_ids is not None:
+            emps = [e for e in emps if e['id'] in team_ids]
+        if not perms.get('block.heatmap.other_employees'):
+            my_emp = u.get('employee_id') or ''
+            emps = [e for e in emps if e['id'] == my_emp] if my_emp else []
+
+        emps_ids = {e['id'] for e in emps}
+        matrix = {}
+        for l in data['log']:
+            ldate = l.get('date', '')
+            if not ldate or ldate < date_from or ldate > date_to:
+                continue
+            eid = l.get('employee_id')
+            if eid not in emps_ids:
+                continue
+            matrix.setdefault(eid, {})
+            matrix[eid][ldate] = matrix[eid].get(ldate, 0.0) + float(l.get('hours', 0) or 0)
+
+        rows = []
+        max_h = 0.0
+        for e in emps:
+            eid = e['id']
+            cells = []
+            tot = 0.0
+            for dk in all_days:
+                try:
+                    wd = datetime.strptime(dk, '%Y-%m-%d').weekday()
+                except Exception:
+                    wd = 0
+                is_wknd = wd >= 5
+                is_hol = dk in holidays
+                is_wd = (wd in WORK_WEEKDAYS) and not is_hol
+                absence = _absence_type(e, dk)
+                is_remote = (absence == 'remote')
+                is_vac = bool(absence) and not is_remote
+                h = round(matrix.get(eid, {}).get(dk, 0.0) * 4) / 4
+                if h > max_h:
+                    max_h = h
+                tot += h
+                missing = (
+                    is_wd and not is_vac and dk <= today and h == 0
+                    and _is_active_on(e, dk) and not _is_dept_head(e)
+                )
+                cells.append({
+                    'date': dk, 'hours': h,
+                    'is_workday': is_wd, 'is_vacation': is_vac,
+                    'is_remote': is_remote,
+                    'absence_type': absence,
+                    'is_weekend': is_wknd, 'is_holiday': is_hol,
+                    'missing': missing, 'is_today': dk == today,
+                })
+            rows.append({
+                'employee_id': eid,
+                'employee_name': e.get('name', ''),
+                'employee_color': e.get('color', '#888'),
+                'employee_department': e.get('department', ''),
+                'employee_fired': bool(e.get('fired')),
+                'employee_fired_date': e.get('fired_date', ''),
+                'cells': cells,
+                'total_hours': round(tot * 4) / 4,
+            })
+        _emp_order_map = {e['id']: i for i, e in enumerate(data['employees'])}
+        rows.sort(key=lambda r: _emp_order_map.get(r['employee_id'], 999999))
+        return jsonify({
+            'success': True, 'from': date_from, 'to': date_to,
+            'days': all_days, 'rows': rows, 'max_hours': max_h,
+            'absence_types': ABSENCE_TYPES,
+        })
+
+    # ============================================================
+    # SETTINGS API
+    # ============================================================
+    @app.route('/api/settings/users', methods=['GET'])
+    @login_required
+    @permission_required('tab.settings')
+    def api_users_list():
+        u = current_user(db)
+        out = []
+        for r in db.users_list():
+            raw = db.user_permissions(r['id'])
+            if r['role'] == 'admin':
+                perms_full = {k: True for k in ALL_PERMISSIONS}
+            else:
+                perms_full = {
+                    k: raw.get(k, k in DEFAULT_USER_PERMISSIONS)
+                    for k in ALL_PERMISSIONS
+                }
+            out.append({
+                'id': r['id'],
+                'username': r['username'],
+                'role': r['role'],
+                'display_name': r.get('display_name', ''),
+                'employee_id': r.get('employee_id', ''),
+                'is_active': bool(r.get('is_active')),
+                'created_at': r.get('created_at', ''),
+                'last_login': r.get('last_login', ''),
+                'permissions': perms_full,
+                'is_admin': r['role'] == 'admin',
+            })
+        return jsonify({
+            'success': True, 'users': out,
+            'permission_groups': [{
+                'title': g['title'],
+                'items': [{'key': k, 'label': v} for k, v in g['items']],
+            } for g in PERMISSION_GROUPS],
+            'default_user': sorted(DEFAULT_USER_PERMISSIONS),
+            'current_user_id': u['id'],
+            'is_admin': u['role'] == 'admin',
+        })
+
+    @app.route('/api/settings/users/save', methods=['POST'])
+    @login_required
+    def api_user_save():
+        u = current_user(db)
+        if u['role'] != 'admin':
+            return jsonify({'success': False, 'error': 'forbidden'}), 403
+        body = request.get_json() or {}
+        uid = body.get('id')
+        username = str(body.get('username', '')).strip()
+        # PATCH v2: кириллица — settings.js отправляет 'kody'
+        kody = body.get('kody') or ''
+        role = body.get('role', 'user')
+        if role not in ('user', 'admin'):
+            role = 'user'
+        display_name = str(body.get('display_name', '')).strip()[:100]
+        employee_id = str(body.get('employee_id', '')).strip()
+        is_active = bool(body.get('is_active', True))
+        perms = body.get('permissions') or {}
+        if not isinstance(perms, dict):
+            perms = {}
+
+        if uid:
+            try:
+                uid = int(uid)
+            except (ValueError, TypeError):
+                uid = None
+
+        if not uid and not username:
+            return jsonify({'success': False, 'error': 'Логин обязателен'}), 400
+        if not uid and not kody:
+            return jsonify({'success': False, 'error': 'parol обязателен'}), 400
+
+        existing = db.user_get_by_name(username) if username else None
+        if existing and existing['id'] != uid:
+            return jsonify({'success': False, 'error': 'Такой логин уже занят'}), 400
+
+        if uid:
+            target = db.user_get(uid)
+            if not target:
+                return jsonify({'success': False, 'error': 'Пользователь не найден'}), 404
+            # PATCH v2: hash_kody (кириллица)
+            pwd_hash = hash_kody(kody) if kody else None
+            db.user_update(uid, role, display_name, employee_id, is_active, pwd_hash=pwd_hash)
+            _audit(db, u, 'update', 'user', uid,
+                   {'username': username, 'role': role})
+        else:
+            # PATCH v2: hash_kody (кириллица)
+            uid = db.user_create(
+                username, hash_kody(kody), role, display_name, employee_id
+            )
+            _audit(db, u, 'create', 'user', uid,
+                   {'username': username, 'role': role})
+
+        if role == 'admin':
+            db.user_permissions_set(uid, {k: True for k in ALL_PERMISSIONS})
+        else:
+            clean = {k: bool(perms.get(k, k in DEFAULT_USER_PERMISSIONS))
+                     for k in ALL_PERMISSIONS}
+            db.user_permissions_set(uid, clean)
+        return jsonify({'success': True, 'id': uid})
+
+    @app.route('/api/settings/users/delete', methods=['POST'])
+    @login_required
+    def api_user_delete():
+        u = current_user(db)
+        if u['role'] != 'admin':
+            return jsonify({'success': False, 'error': 'forbidden'}), 403
+        try:
+            uid = int((request.get_json() or {}).get('id'))
+        except (ValueError, TypeError):
+            return jsonify({'success': False, 'error': 'Некорректный id'}), 400
+        if uid == u['id']:
+            return jsonify({'success': False, 'error': 'Нельзя удалить самого себя'}), 400
+        admins = [x for x in db.users_list() if x['role'] == 'admin']
+        target = db.user_get(uid)
+        if target and target['role'] == 'admin' and len(admins) <= 1:
+            return jsonify({
+                'success': False,
+                'error': 'Нельзя удалить последнего администратора'
+            }), 400
+        db.user_delete(uid)
+        _audit(db, u, 'delete', 'user', uid, {})
+        return jsonify({'success': True})
+
+    # PATCH v2: URL роутов оставлен кириллицей — settings.js отправляет
+    # fetch('/api/settings/kody', {old_kody, new_kody})
+    @app.route('/api/settings/kody', methods=['POST'])
+    @login_required
+    def api_change_kody():
+        u = current_user(db)
+        body = request.get_json() or {}
+        old = body.get('old_kody') or ''
+        new = body.get('new_kody') or ''
+        if len(new) < 6:
+            return jsonify({'success': False, 'error': 'parol минимум 6 символов'}), 400
+        # PATCH v2: verify_kody / hash_kody (кириллица), поле kody_hash латиница
+        if not verify_kody(u['kody_hash'], old):
+            return jsonify({'success': False, 'error': 'Неверный текущий parol'}), 400
+        db.user_update(
+            u['id'], u['role'], u.get('display_name', ''),
+            u.get('employee_id', ''), True, pwd_hash=hash_kody(new)
+        )
+        _audit(db, u, 'update', 'user', u['id'], {'kody_changed': True})
+        return jsonify({'success': True})
+
+    @app.route('/api/settings/db_info', methods=['GET'])
+    @login_required
+    @permission_required('tab.settings')
+    def api_db_info():
+        size = None
+        try:
+            size = Path(cfg['db_path']).stat().st_size
+        except Exception:
+            pass
+        return jsonify({
+            'success': True,
+            'db_path': cfg['db_path'],
+            'db_size': size,
+            'host': cfg.get('host', ''),
+            'port': cfg.get('port', ''),
+        })
+
+    @app.route('/api/settings/db_path/save', methods=['POST'])
+    @login_required
+    @permission_required('tab.settings')
+    def api_db_path_save():
+        body = request.get_json() or {}
+        new_path = str(body.get('db_path', '')).strip()
+        copy_data = bool(body.get('copy_data', True))
+        force_empty = bool(body.get('force_empty', False))
+        if not new_path:
+            return jsonify({'success': False, 'error': 'Путь не указан'}), 400
+        p = Path(new_path)
+        if not p.is_absolute():
+            p = BASE_DIR / p
+        if not p.parent.exists():
+            return jsonify({
+                'success': False,
+                'error': f'Папка не существует: {p.parent}',
+            }), 400
+
+        old_path_str = str(cfg.get('db_path') or '')
+        old_path = Path(old_path_str) if old_path_str else None
+        if old_path is not None and not old_path.is_absolute():
+            old_path = BASE_DIR / old_path
+
+        # PATCH v1.0.27: если путь тот же — ничего не делаем
+        same_path = False
+        try:
+            if old_path is not None and old_path.resolve() == p.resolve():
+                same_path = True
+        except Exception:
+            pass
+
+        copied = False
+        if not same_path:
+            # Есть ли данные в новой БД?
+            new_has_users = 0
+            if p.exists():
+                try:
+                    import sqlite3 as _sq1
+                    with _sq1.connect(str(p), timeout=10.0) as _c1:
+                        _t = _c1.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='users'").fetchone()
+                        if _t:
+                            _r = _c1.execute('SELECT COUNT(*) FROM users').fetchone()
+                            new_has_users = int(_r[0]) if _r else 0
+                except Exception as _e:
+                    print(f'[db_path] проверка нового файла: {_e}')
+            if new_has_users > 0 and not force_empty:
+                return jsonify({
+                    'success': False,
+                    'error': (f'По пути уже существует БД с данными ({new_has_users} пользователей): {p}. '
+                              f'Укажите другой путь или подтвердите перезапись.'),
+                    'exists_with_data': True,
+                    'users_count': new_has_users,
+                }), 409
+
+            # Копируем текущую БД в новое место (только если старый файл есть)
+            if copy_data and not force_empty and old_path is not None and old_path.exists():
+                try:
+                    import sqlite3 as _sq2
+                    _src = _sq2.connect(str(old_path), timeout=30.0)
+                    _dst = _sq2.connect(str(p))
+                    try:
+                        with _dst:
+                            _src.backup(_dst)
+                    finally:
+                        try: _src.close()
+                        except Exception: pass
+                        try: _dst.close()
+                        except Exception: pass
+                    copied = True
+                    print(f'[db_path] скопировано: {old_path} -> {p}')
+                except Exception as e:
+                    return jsonify({'success': False, 'error': f'Не удалось скопировать БД: {e}'}), 500
+
+        try:
+            cfg_local = json.loads(CONFIG_PATH.read_text(encoding='utf-8'))
+            cfg_local['db_path'] = str(p)
+            CONFIG_PATH.write_text(
+                json.dumps(cfg_local, ensure_ascii=False, indent=2),
+                encoding='utf-8',
+            )
+        except Exception as e:
+            return jsonify({'success': False, 'error': f'Ошибка записи: {e}'}), 500
+        _audit(db, current_user(db), 'update', 'config', 'db_path',
+               {'old': old_path_str, 'new': str(p), 'copied': copied})
+        return jsonify({
+            'success': True,
+            'message': ('Данные скопированы. ' if copied else '') + 'Перезапустите сервер для применения.',
+            'copied': copied,
+            'new_path': str(p),
+        })
+
+    @app.route('/api/settings/net_update_path', methods=['GET'])
+    @login_required
+    @permission_required('tab.settings')
+    def api_get_net_update_path():
+        try:
+            cfg_local = json.loads(CONFIG_PATH.read_text(encoding='utf-8'))
+        except Exception:
+            cfg_local = {}
+        nu = cfg_local.get('net_update')
+        if not isinstance(nu, dict):
+            nu = {}
+        # Читаем оба варианта: старый 'sharepath' и новый 'share_path'
+        path = (nu.get('share_path') or nu.get('sharepath') or '').strip()
+        return jsonify({
+            'success': True,
+            'path': path,
+            'enabled': bool(nu.get('enabled', True)),
+        })
+
+
+    @app.route('/api/settings/net_update_path', methods=['POST'])
+    @login_required
+    @permission_required('tab.settings')
+    def api_set_net_update_path():
+        body = request.get_json() or {}
+        new_path = str(body.get('path', '')).strip()
+        if not new_path:
+            return jsonify({'success': False, 'error': 'Путь не указан'}), 400
+        try:
+            try:
+                cfg_local = json.loads(CONFIG_PATH.read_text(encoding='utf-8'))
+            except Exception:
+                cfg_local = {}
+            nu = cfg_local.get('net_update')
+            if not isinstance(nu, dict):
+                # Первый раз: создаём секцию и включаем
+                cfg_local['net_update'] = {'enabled': True, 'share_path': new_path}
+            else:
+                # Существующая секция: сохраняем enabled как есть
+                nu['share_path'] = new_path
+                nu['sharepath'] = new_path
+            CONFIG_PATH.write_text(
+                json.dumps(cfg_local, ensure_ascii=False, indent=2),
+                encoding='utf-8'
+            )
+            _audit(db, current_user(db), 'update', 'config', 'net_update_path',
+                   {'new_path': new_path})
+            return jsonify({
+                'success': True,
+                'message': 'Путь сохранён',
+                'path': new_path,
+            })
+        except Exception as e:
+            return jsonify({'success': False, 'error': f'Ошибка записи config.json: {e}'}), 500
+
+    @app.route('/api/settings/stats_ignore_future', methods=['GET'])
+    @login_required
+    @permission_required('tab.settings')
+    def api_get_stats_ignore_future():
+        try:
+            v = db.get_setting('stats_ignore_future', '1')
+        except Exception:
+            v = '1'
+        return jsonify({'success': True, 'value': (str(v) != '0')})
+
+    @app.route('/api/settings/stats_ignore_future', methods=['POST'])
+    @login_required
+    @permission_required('tab.settings')
+    def api_set_stats_ignore_future():
+        body = request.get_json() or {}
+        v = bool(body.get('value'))
+        try:
+            db.set_setting('stats_ignore_future', '1' if v else '0')
+        except Exception as e:
+            return jsonify({'success': False, 'error': str(e)}), 500
+        _audit(db, current_user(db), 'update', 'config', 'stats_ignore_future', {'value': v})
+        return jsonify({'success': True, 'value': v})
+
+    @app.route('/api/settings/excel_mask_names', methods=['GET'])
+    @login_required
+    @permission_required('tab.settings')
+    def api_get_excel_mask_names():
+        try:
+            v = db.get_setting('excel_mask_names', '0')
+        except Exception:
+            v = '0'
+        return jsonify({'success': True, 'value': (str(v) == '1')})
+
+    @app.route('/api/settings/excel_mask_names', methods=['POST'])
+    @login_required
+    @permission_required('tab.settings')
+    def api_set_excel_mask_names():
+        body = request.get_json() or {}
+        v = bool(body.get('value'))
+        try:
+            db.set_setting('excel_mask_names', '1' if v else '0')
+        except Exception as e:
+            return jsonify({'success': False, 'error': str(e)}), 500
+        _audit(db, current_user(db), 'update', 'config', 'excel_mask_names', {'value': v})
+        return jsonify({'success': True, 'value': v})
+
+    @app.route('/api/settings/audit', methods=['GET'])
+    @login_required
+    @permission_required('tab.settings')
+    def api_audit():
+        kind = request.args.get('kind', '').strip()
+        try:
+            limit = int(request.args.get('limit', 300))
+        except (ValueError, TypeError):
+            limit = 300
+        limit = min(max(1, limit), 2000)
+        sql = 'SELECT * FROM audit_log'
+        params = []
+        if kind:
+            sql += ' WHERE kind=?'
+            params.append(kind)
+        sql += ' ORDER BY id DESC LIMIT ?'
+        params.append(limit)
+        rows = db.query(sql, tuple(params))
+        return jsonify({'success': True, 'items': rows})
+
+    @app.route('/api/settings/db_backup', methods=['POST'])
+    @login_required
+    @permission_required('tab.settings')
+    def api_db_backup():
+        import subprocess, sys as _sys
+        _base = BASE_DIR
+        try:
+            _r = subprocess.run(
+                [_sys.executable, str(_base / 'backup_db.py'), '--quiet'],
+                cwd=str(_base), capture_output=True, text=True, timeout=60
+            )
+            _ok = (_r.returncode == 0)
+        except Exception as _e:
+            return jsonify({'success': False, 'error': f'backup failed: {_e}'}), 500
+        _bdir = Path(cfg['db_path'])
+        if not _bdir.is_absolute():
+            _bdir = _base / _bdir
+        _bdir = _bdir.parent / 'backups' / 'db'
+        _last = None
+        if _bdir.exists():
+            _files = sorted(_bdir.glob('db_*.db'), key=lambda p: p.stat().st_mtime, reverse=True)
+            if _files:
+                _last = {'name': _files[0].name, 'size': _files[0].stat().st_size}
+        _audit(db, current_user(db), 'create', 'db_backup', '', {'ok': _ok, 'last': _last})
+        if not _ok:
+            return jsonify({'success': False, 'error': 'backup failed'}), 500
+        return jsonify({'success': True, 'last': _last})
+
+    @app.route('/api/settings/db_backup/list', methods=['GET'])
+    @login_required
+    @permission_required('tab.settings')
+    def api_db_backup_list():
+        _base = BASE_DIR
+        _p = Path(cfg['db_path'])
+        if not _p.is_absolute():
+            _p = _base / _p
+        _bdir = _p.parent / 'backups' / 'db'
+        _items = []
+        if _bdir.exists():
+            for _f in sorted(_bdir.glob('db_*.db'), key=lambda x: x.stat().st_mtime, reverse=True)[:20]:
+                _items.append({'name': _f.name, 'size': _f.stat().st_size,
+                               'mtime': datetime.fromtimestamp(_f.stat().st_mtime).strftime('%Y-%m-%d %H:%M:%S')})
+        return jsonify({'success': True, 'items': _items})
+
+    @app.route('/api/settings/db_backup/download', methods=['GET'])
+    @login_required
+    @permission_required('tab.settings')
+    def api_db_backup_download():
+        from flask import send_file
+        _name = str(request.args.get('name', '')).strip()
+        if not _name or '/' in _name or '\\' in _name or '..' in _name:
+            return jsonify({'success': False, 'error': 'bad name'}), 400
+        _p = Path(cfg['db_path'])
+        if not _p.is_absolute():
+            _p = BASE_DIR / _p
+        _f = _p.parent / 'backups' / 'db' / _name
+        if not _f.exists():
+            return jsonify({'success': False, 'error': 'not found'}), 404
+        return send_file(str(_f), as_attachment=True, download_name=_name, max_age=0)
+
+    @app.route('/api/settings/plugins', methods=['GET'])
+    @login_required
+    @permission_required('tab.settings')
+    def api_plugins_list():
+        from plugins_loader import read_plugin_state
+        plugins_dir = BASE_DIR / 'plugins'
+        state = read_plugin_state(plugins_dir)
+        if isinstance(state, dict) and state.get('_read_error'):
+            state = {}
+        loaded_map = {p['name']: p for p in (app.config.get('LOADED_PLUGINS', []) or [])}
+        items = []
+        if plugins_dir.exists():
+            for f in sorted(plugins_dir.glob('*.py')):
+                if f.name.startswith('_'):
+                    continue
+                name = f.stem
+                info = loaded_map.get(name, {})
+                st = state.get(name, {}) or {}
+                enabled = st.get('enabled', True)
+                items.append({
+                    'name': name,
+                    'file': f.name,
+                    'version': info.get('version', '—'),
+                    'description': info.get('description', ''),
+                    'enabled': bool(enabled),
+                    'loaded': name in loaded_map,
+                    'updated_at': st.get('updated_at', ''),
+                })
+        return jsonify({
+            'success': True,
+            'plugins': items,
+            'plugins_dir': str(plugins_dir),
+        })
+
+    @app.route('/api/settings/plugins/toggle', methods=['POST'])
+    @login_required
+    def api_plugins_toggle():
+        u = current_user(db)
+        if u['role'] != 'admin':
+            return jsonify({'success': False, 'error': 'forbidden'}), 403
+        body = request.get_json() or {}
+        name = str(body.get('name', '')).strip()
+        enabled = bool(body.get('enabled', True))
+        if not name:
+            return jsonify({'success': False, 'error': 'Не указан плагин'}), 400
+        from plugins_loader import set_plugin_enabled
+        plugins_dir = BASE_DIR / 'plugins'
+        set_plugin_enabled(plugins_dir, name, enabled)
+        _audit(db, u, 'update', 'plugin', name, {'enabled': enabled})
+        return jsonify({
+            'success': True,
+            'enabled': enabled,
+            'message': 'Изменение применится после перезапуска сервера',
+        })
+
+    # ============================================================
+    # PATCH v1.0.20 — NOTIFICATIONS
+    # ============================================================
+    @app.route('/api/notifications', methods=['GET'])
+    @login_required
+    def api_notifications_list():
+        u = current_user(db)
+        try:
+            limit = int(request.args.get('limit', 50))
+        except (ValueError, TypeError):
+            limit = 50
+        limit = min(max(1, limit), 200)
+        rows = db.query(
+            'SELECT id, ts, from_user_id, from_username, kind, task_id, employee_id, message, status, read_at '
+            'FROM notifications WHERE to_user_id=? ORDER BY id DESC LIMIT ?',
+            (u['id'], limit),
+        )
+        unread = sum(1 for r in rows if not r.get('read_at'))
+        return jsonify({'success': True, 'items': rows, 'unread': unread})
+
+    @app.route('/api/notifications/read', methods=['POST'])
+    @login_required
+    def api_notifications_read():
+        u = current_user(db)
+        body = request.get_json() or {}
+        nid = body.get('id')
+        now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        if nid:
+            try:
+                nid = int(nid)
+            except (ValueError, TypeError):
+                return jsonify({'success': False, 'error': 'bad id'}), 400
+            db.exec(
+                'UPDATE notifications SET read_at=? WHERE id=? AND to_user_id=?',
+                (now, nid, u['id']),
+            )
+        else:
+            db.exec(
+                'UPDATE notifications SET read_at=? WHERE to_user_id=? AND read_at=""',
+                (now, u['id']),
+            )
+        return jsonify({'success': True})
+
+    @app.route('/api/notifications/action', methods=['POST'])
+    @login_required
+    def api_notifications_action():
+        u = current_user(db)
+        body = request.get_json() or {}
+        try:
+            nid = int(body.get('id'))
+        except (ValueError, TypeError):
+            return jsonify({'success': False, 'error': 'bad id'}), 400
+        action = str(body.get('action') or '').strip()
+        if action not in ('accept', 'reject'):
+            return jsonify({'success': False, 'error': 'bad action'}), 400
+        row = db.query_one('SELECT * FROM notifications WHERE id=? AND to_user_id=?', (nid, u['id']))
+        if not row:
+            return jsonify({'success': False, 'error': 'not found'}), 404
+        now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        if action == 'accept':
+            db.exec(
+                'UPDATE notifications SET status="confirmed", read_at=? WHERE id=?',
+                (now, nid),
+            )
+            return jsonify({'success': True})
+        # reject: откатываем последнюю done-отметку сотрудника по этой задаче
+        tid = row.get('task_id') or ''
+        emp_id = row.get('employee_id') or ''
+        if not tid or not emp_id:
+            return jsonify({'success': False, 'error': 'no task/employee'}), 400
+        _last = db.query_one(
+            'SELECT id FROM work_logs WHERE task_id=? AND employee_id=? AND status="done" ORDER BY date DESC, id DESC LIMIT 1',
+            (tid, emp_id),
+        )
+        if _last:
+            db.exec('UPDATE work_logs SET status="in_progress" WHERE id=?', (_last['id'],))
+            try:
+                _try_reopen_if_stale_autoclose(db, tid, u)
+            except Exception:
+                pass
+        db.exec(
+            'UPDATE notifications SET status="rejected", read_at=? WHERE id=?',
+            (now, nid),
+        )
+        return jsonify({'success': True, 'reverted_log': bool(_last)})
+
+    # ============================================================
+    # PLUGINS
+    # ============================================================
+    registry = HookRegistry()
+    app.config['PLUGIN_REGISTRY'] = registry
+    try:
+        loaded_plugins = load_plugins(BASE_DIR / 'plugins', app, db, registry)
+        app.config['LOADED_PLUGINS'] = loaded_plugins
+    except Exception as e:
+        print(f'[plugins] fatal: {e}')
+        app.config['LOADED_PLUGINS'] = []
+    try:
+        registry.emit('on_startup', app=app, db=db)
+    except Exception:
+        pass
+
+    import atexit
+    def _emit_shutdown():
+        try:
+            registry.emit('on_shutdown', app=app, db=db)
+        except Exception:
+            pass
+    atexit.register(_emit_shutdown)
+
+    return app
+

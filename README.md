@@ -6,10 +6,6 @@
 ![Скриншот](docs/screenshot.png)
 -->
 
-<p align="center">
-  <img src="docs/screenshot.png" alt="Трекер задач" width="900" />
-</p>
-
 ---
 
 ## Зачем это
