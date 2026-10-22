@@ -86,6 +86,8 @@ body {
     border-color: var(--pg-accent, #f5d76e);
 }
 .head label { font-size: 0.75rem; color: var(--pg-meta, #a0a0a0); display: inline-flex; align-items: center; gap: 4px; }
+.ms-dd-group { display: inline-flex; flex-direction: column; gap: 2px; }
+.ms-dd-label { font-size: 0.62rem; letter-spacing: .04em; text-transform: uppercase; color: var(--pg-accent, #f5d76e); font-weight: 700; padding-left: 2px; }
 .head input[type="date"],
 .head select {
     padding: 6px 10px;
@@ -612,9 +614,12 @@ body.trk-theme-light .gg-bank-cell.lvl3 { background:#fcdada; color:#9b1c1c; }
             <h1>📅 План проверок</h1>
         </div>
         <div class="head-filters">
-            <div class="ms-dd" id="fKindDD">
-                <button type="button" class="ms-dd-btn" id="fKindBtn">Аудиторская проверка</button>
-                <div class="ms-dd-panel" id="fKindPanel"></div>
+            <div class="ms-dd-group" id="fKindGroup">
+                <span class="ms-dd-label">Тип задачи</span>
+                <div class="ms-dd" id="fKindDD">
+                    <button type="button" class="ms-dd-btn" id="fKindBtn">Аудиторская проверка</button>
+                    <div class="ms-dd-panel" id="fKindPanel"></div>
+                </div>
             </div>
             <select id="fType">
                 <option value="">Все типы проверок</option>
@@ -1402,6 +1407,7 @@ function renderBanks(d, periods, mode, cellW, STAGE_COLORS, STAGE_LABELS) {
     if (!banks.length || !periods.length) {
         titleEl.style.display = 'none';
         box.style.display = 'none';
+        box.innerHTML = '';
         return;
     }
     titleEl.style.display = 'block';

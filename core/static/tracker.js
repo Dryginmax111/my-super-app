@@ -659,6 +659,7 @@ window.__trkRenderSummaryGrid = function() {
 window.__trkState = state;
 window.__trkOpenDayModal = openDayModal;
 window.__trkOpenTaskModal = openTaskModal;
+window.__trkOpenTaskKindChooser = openTaskKindChooser;
 window.__trkLoadSummary = loadSummary;   // PATCH: раньше не экспортировался — 
                                           // пилюли тегов в Своде не перерисовывали
 window.__trkLoadStats = loadStats;
@@ -8554,11 +8555,13 @@ loadState().then(function() {
         b.textContent = '➕';
         b.addEventListener('click', function(e) {
             e.preventDefault();
-            if (typeof window.__trkOpenTaskModal === 'function') {
-                window.__trkOpenTaskModal(null);
+            // Новая задача → сначала спросить тип (аудит/другое), не открывать карточку напрямую
+            if (typeof window.__trkOpenTaskKindChooser === 'function') {
+                window.__trkOpenTaskKindChooser();
             } else {
                 var alt = document.getElementById('addTaskBtn2') || document.getElementById('addTaskBtn');
                 if (alt) alt.click();
+                else if (typeof window.__trkOpenTaskModal === 'function') window.__trkOpenTaskModal(null);
             }
         });
         document.body.appendChild(b);
