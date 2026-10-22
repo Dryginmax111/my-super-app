@@ -288,16 +288,16 @@ body {
 .gg-edit {
     margin-left: 6px; flex: 0 0 auto;
     opacity: 0.55; text-decoration: none;
-    font-size: 0.72rem; cursor: pointer;
-    transition: opacity 0.12s, background 0.12s;
-    border: 1px solid var(--pg-border, rgba(255,255,255,0.18));
-    background: var(--pg-inner-bg, rgba(255,255,255,0.06));
+    font-size: 0.95rem; cursor: pointer;
+    transition: opacity 0.12s, background 0.12s, transform 0.12s;
+    border: 1px solid transparent;
+    background: transparent;
     color: var(--pg-text, #e8e8e8);
-    border-radius: 5px; padding: 1px 7px; line-height: 1.5;
+    border-radius: 5px; padding: 1px 5px; line-height: 1.4;
     font-family: inherit; white-space: nowrap;
 }
 .gg-row:hover .gg-edit { opacity: 1; }
-.gg-edit:hover { opacity: 1; background: var(--pg-accent-soft, rgba(245,215,110,0.22)); }
+.gg-edit:hover { opacity: 1; background: var(--pg-accent-soft, rgba(245,215,110,0.22)); transform: scale(1.12); }
 body.trk-theme-light .gg-edit { color:#1b5e20; background:#eef3ee; border-color:rgba(0,0,0,0.15); }
 body.trk-theme-light .gg-edit:hover { background:#dceadc; }
 .gg-dot {
@@ -947,7 +947,7 @@ function renderDay(d) {
         html +=     '<span class="gg-dot gg-dot-' + cls + '"></span>';
         html +=     '<span class="gg-ico">' + esc(t.icon || '📋') + '</span>';
         html +=     '<span class="gg-task-name" title="' + esc(t.name) + '">' + esc(t.name) + '</span>';
-        html +=     '<button type="button" class="gg-edit" data-edit-tid="' + encodeURIComponent(t.id) + '" title="Редактировать проверку" onclick="event.stopPropagation()">Редактировать</button>';
+        html +=     '<a class="gg-edit" href="/?open_task=' + encodeURIComponent(t.id) + '" title="Редактировать" aria-label="Редактировать" onclick="event.stopPropagation()">\u270f\ufe0f</a>';
         html +=   '</div>';
         html +=   '<div class="gg-track" style="width:' + trackW + 'px">';
         html +=     '<div class="gg-bar gg-bar-' + cls + '" style="left:' + barLeft + 'px;width:' + barWidth + 'px" title="' + esc(title) + '">';
@@ -1058,7 +1058,7 @@ function renderWeek(d) {
         html +=     '<span class="gg-dot gg-dot-' + (t.overdue ? 'overdue' : (t.status||'active')) + '"></span>';
         html +=     '<span class="gg-ico">' + esc(t.icon || '📋') + '</span>';
         html +=     '<span class="gg-task-name" title="' + esc(t.name) + '">' + esc(t.name) + '</span>';
-        html +=     '<button type="button" class="gg-edit" data-edit-tid="' + encodeURIComponent(t.id) + '" title="Редактировать проверку" onclick="event.stopPropagation()">Редактировать</button>';
+        html +=     '<a class="gg-edit" href="/?open_task=' + encodeURIComponent(t.id) + '" title="Редактировать" aria-label="Редактировать" onclick="event.stopPropagation()">\u270f\ufe0f</a>';
         html +=   '</div>';
         html +=   '<div class="gg-track" style="width:' + trackW + 'px">';
         /* По каждой неделе — цвет этапа, активного в понедельник */
@@ -1196,30 +1196,6 @@ document.getElementById('fStatus').addEventListener('change', load);
 document.getElementById('fView').addEventListener('change', load);
 document.getElementById('fType').addEventListener('change', load);
 
-/* п.1: редактирование задачи ПРЯМО из плана проверок, без ухода в раздел «Задачи» */
-document.addEventListener('click', function(ev) {
-    var btn = ev.target.closest ? ev.target.closest('.gg-edit') : null;
-    if (!btn) return;
-    ev.preventDefault();
-    ev.stopPropagation();
-    var tid = btn.getAttribute('data-edit-tid');
-    if (!tid) return;
-    var opener = window.__trkOpenTaskModal;
-    if (typeof opener !== 'function') {
-        if (window.notify) window.notify('Редактирование недоступно', 'error');
-        return;
-    }
-    var t = null;
-    var d = window.__ggLastData;
-    if (d && Array.isArray(d.tasks)) {
-        t = d.tasks.find(function(x) { return String(x.id) === String(tid); });
-    }
-    if (!t && window.__trkState && Array.isArray(window.__trkState.tasks)) {
-        t = window.__trkState.tasks.find(function(x) { return String(x.id) === String(tid); });
-    }
-    if (!t) { if (window.notify) window.notify('Проверка не найдена: ' + tid, 'error'); return; }
-    try { opener(t); } catch (er) { console.error('[gg-edit]', er); }
-});
 msInit();
 initDates();
 loadMeta();
