@@ -549,6 +549,38 @@ body.trk-theme-light .gg-bank-cell.gg-offday {
     color: transparent !important;
     border-color: rgba(160,160,160,0.35) !important;
 }
+
+/* Урезанная модалка редактирования внутри gantt */
+.gg-modal-mask { position: fixed; inset: 0; background: rgba(0,0,0,0.48); display: none; align-items: center; justify-content: center; z-index: 2000; padding: 20px; }
+.gg-modal-mask.open { display: flex; }
+.gg-modal { width: min(1180px, 96vw); max-height: 92vh; overflow: auto; background: var(--pg-card-bg, #1a1a1a); color: var(--pg-text, #e8e8e8); border: 1px solid var(--pg-card-border, rgba(245,215,110,0.22)); border-radius: 16px; box-shadow: 0 18px 60px rgba(0,0,0,0.38); }
+.gg-modal-head { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:16px 18px; border-bottom:1px solid var(--pg-card-border-soft, rgba(245,215,110,0.12)); position: sticky; top: 0; background: inherit; z-index: 2; }
+.gg-modal-title { font-size: 1.05rem; font-weight: 800; }
+.gg-modal-close { border:1px solid var(--pg-input-border, rgba(245,215,110,0.26)); background: var(--pg-input-bg, #232323); color: var(--pg-text, #e8e8e8); border-radius: 8px; padding: 6px 10px; cursor:pointer; }
+.gg-modal-body { padding: 16px 18px 18px; display:flex; flex-direction:column; gap:16px; }
+.gg-form-grid { display:grid; grid-template-columns: repeat(12, minmax(0,1fr)); gap: 12px; }
+.gg-field { display:flex; flex-direction:column; gap:6px; }
+.gg-field label { font-size:0.76rem; text-transform:uppercase; letter-spacing:0.5px; color: var(--pg-meta, #a0a0a0); font-weight:700; }
+.gg-span-2 { grid-column: span 2; } .gg-span-3 { grid-column: span 3; } .gg-span-4 { grid-column: span 4; } .gg-span-6 { grid-column: span 6; } .gg-span-10 { grid-column: span 10; } .gg-span-12 { grid-column: span 12; }
+.gg-field input[type="text"], .gg-field input[type="date"], .gg-field select { padding: 8px 10px; border-radius: 8px; border:1px solid var(--pg-input-border, rgba(245,215,110,0.26)); background: var(--pg-input-bg, #232323); color: var(--pg-text, #e8e8e8); font-family: inherit; font-size: 0.92rem; }
+.gg-field input[readonly] { opacity: 0.85; cursor: default; }
+.gg-box { border:1px solid var(--pg-card-border-soft, rgba(245,215,110,0.12)); border-radius: 12px; padding: 12px; background: rgba(255,255,255,0.02); }
+.gg-box-title { font-size:0.82rem; font-weight:800; margin:0 0 10px; color: var(--pg-accent, #f5d76e); }
+.gg-help { color: var(--pg-meta, #a0a0a0); font-size:0.78rem; font-style: italic; margin-top:4px; }
+.gg-check-grid { display:grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap:8px 12px; }
+.gg-check { display:flex; align-items:center; gap:8px; padding:6px 8px; border-radius:8px; background: rgba(255,255,255,0.03); }
+.gg-check input { margin:0; }
+.gg-stage-grid { display:grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap:12px; }
+.gg-modal-actions { display:flex; justify-content:flex-end; gap:10px; padding-top: 4px; }
+.gg-btn { border:1px solid var(--pg-input-border, rgba(245,215,110,0.26)); background: var(--pg-input-bg, #232323); color: var(--pg-text, #e8e8e8); border-radius: 8px; padding: 8px 12px; cursor:pointer; font-family:inherit; }
+.gg-btn-primary { border:none; background: linear-gradient(135deg, var(--pg-accent, #f5d76e), var(--pg-accent-2, #e6a81a)); color:#0a0a0a; font-weight:800; }
+.gg-error { display:none; color:#ffb3b3; background: rgba(231,76,60,0.12); border:1px solid rgba(231,76,60,0.24); border-radius:10px; padding:10px 12px; }
+.gg-error.open { display:block; }
+.gg-saving { opacity: 0.7; pointer-events:none; }
+body.trk-theme-light .gg-modal { background:#fbfcfb; color:#13351a; border-color:#cfe1cf; }
+body.trk-theme-light .gg-box { background:#f6faf6; }
+body.trk-theme-light .gg-check { background:#eef5ee; }
+@media (max-width: 980px) { .gg-check-grid, .gg-stage-grid { grid-template-columns: repeat(2, minmax(0,1fr)); } .gg-span-2,.gg-span-3,.gg-span-4,.gg-span-6,.gg-span-10 { grid-column: span 12; } }
 /* Тепловая заливка по величине нагрузки */
 .gg-bank-cell.lvl0 { background: transparent; border-color: transparent; color: var(--pg-meta,#888); }
 .gg-bank-cell.lvl1 { background: rgba(129,199,132,0.28); color:#dfeede; }  /* <2 — светло-зелёный */
@@ -625,7 +657,47 @@ body.trk-theme-light .gg-bank-cell.lvl3 { background:#fcdada; color:#9b1c1c; }
         <div class="it" style="margin-left:auto;font-style:italic;">Сегодняшний день выделен зелёным</div>
     </div>
     <div class="banks-title" id="banksTitle" style="display:none;">Нагрузка по тер банкам</div>
-    <div class="gantt-box" id="banksBox" style="display:none;"></div>
+    <div class="gg-modal-mask" id="ggTaskMask">
+    <div class="gg-modal" role="dialog" aria-modal="true" aria-labelledby="ggTaskTitle">
+        <div class="gg-modal-head">
+            <div class="gg-modal-title" id="ggTaskTitle">Редактирование проверки</div>
+            <button type="button" class="gg-modal-close" id="ggTaskClose">✕</button>
+        </div>
+        <div class="gg-modal-body" id="ggTaskBody">
+            <div class="gg-error" id="ggTaskErr"></div>
+            <div class="gg-form-grid">
+                <div class="gg-field gg-span-2"><label>Иконка</label><input type="text" id="ggFIcon" maxlength="8"></div>
+                <div class="gg-field gg-span-10"><label>Название</label><input type="text" id="ggFName" readonly></div>
+                <div class="gg-field gg-span-3"><label>Тип задачи</label><select id="ggFType"><option value="">Выберите тип</option><option value="розничная">Розничная</option><option value="корпоративная">Корпоративная</option></select></div>
+                <div class="gg-field gg-span-3"><label>Карман</label><input type="text" id="ggFPocket" maxlength="200"></div>
+            </div>
+            <div class="gg-box">
+                <div class="gg-box-title">Этапы задачи</div>
+                <div class="gg-stage-grid" id="ggStages"></div>
+                <div class="gg-help">Указывается только дата начала этапа. Конец подтягивается автоматически на сервере; у последнего этапа — дедлайн задачи.</div>
+            </div>
+            <div class="gg-box">
+                <div class="gg-box-title">Отделы / тер банки</div>
+                <div class="gg-check-grid" id="ggDeptChecks"></div>
+            </div>
+            <div class="gg-box">
+                <div class="gg-box-title">Назначено</div>
+                <div class="gg-check-grid" id="ggAssignChecks"></div>
+            </div>
+            <div class="gg-box">
+                <div class="gg-box-title">Руководитель проверки</div>
+                <div class="gg-form-grid">
+                    <div class="gg-field gg-span-6"><label>Банк-руководитель *</label><select id="ggFLeadDept"></select></div>
+                    <div class="gg-field gg-span-6"><label>Сотрудник</label><select id="ggFLeadEmp"></select></div>
+                </div>
+            </div>
+            <div class="gg-modal-actions">
+                <button type="button" class="gg-btn" id="ggTaskCancel">Отмена</button>
+                <button type="button" class="gg-btn gg-btn-primary" id="ggTaskSave">Сохранить</button>
+            </div>
+        </div>
+    </div>
+</div>
 </div>
 
 <script>
@@ -742,6 +814,10 @@ function round2(v) { return Math.round(v * 100) / 100; }
 var ggExpanded = {};
 var ggDeptNames = {};
 var ggHolidays = {};
+var ggTaskState = { loaded:false, tasksById:{}, employees:[], departments:[] };
+var ggTaskCurrent = null;
+var GG_STAGE_ORDER = ['подготовка','проверка_нжя','проверка_соглЦА','ос_проф','реализация_возражения','реализация_согласования','запас','оценка_тб'];
+var GG_STAGE_LABELS = { 'подготовка':'Подготовка', 'проверка_нжя':'Проверка НЖЯ', 'проверка_соглЦА':'Проверка согл. ЦА', 'ос_проф':'ОС проф.', 'реализация_возражения':'Реализация возражения', 'реализация_согласования':'Реализация согласования', 'запас':'Запас', 'оценка_тб':'Оценка ТБ' };
 
 function isOffDay(iso) {
     if (!iso) return false;
@@ -873,6 +949,93 @@ function msInit() {
     document.addEventListener('click', function() {
         document.querySelectorAll('.ms-dd.open').forEach(function(x) { x.classList.remove('open'); });
     });
+}
+
+function ggTaskMask(){ return document.getElementById('ggTaskMask'); }
+function ggTaskErr(msg) {
+    var e = document.getElementById('ggTaskErr');
+    if (!msg) { e.classList.remove('open'); e.textContent = ''; return; }
+    e.textContent = msg; e.classList.add('open');
+}
+function ggNormList(v) { return Array.isArray(v) ? v.slice() : []; }
+function ggTaskClone(o) { return JSON.parse(JSON.stringify(o || {})); }
+function ggTaskSelectedChecks(boxId) {
+    return Array.from(document.querySelectorAll('#' + boxId + ' input[type="checkbox"]:checked')).map(function(x){ return x.value; });
+}
+function ggTaskBuildStages(stages) {
+    var box = document.getElementById('ggStages'); box.innerHTML = '';
+    GG_STAGE_ORDER.forEach(function(k){
+        var v = ''; (stages || []).forEach(function(st){ if (st && st.key === k) v = st.start || ''; });
+        box.insertAdjacentHTML('beforeend', '<div class="gg-field"><label>' + esc(GG_STAGE_LABELS[k] || k) + '</label><input type="date" data-stage-key="' + esc(k) + '" value="' + esc(v) + '"></div>');
+    });
+}
+function ggTaskBuildDeptChecks(selected) {
+    var box = document.getElementById('ggDeptChecks'); var sel = {}; (selected || []).forEach(function(x){ sel[x] = true; }); box.innerHTML = '';
+    (ggTaskState.departments || []).forEach(function(d){ box.insertAdjacentHTML('beforeend', '<label class="gg-check"><input type="checkbox" class="gg-dept-chk" value="' + esc(d.id) + '"' + (sel[d.id] ? ' checked' : '') + '><span>' + esc(d.name) + '</span></label>'); });
+}
+function ggTaskBuildAssignChecks(selected) {
+    var box = document.getElementById('ggAssignChecks'); var deptSel = {}; ggTaskSelectedChecks('ggDeptChecks').forEach(function(x){ deptSel[x] = true; }); var sel = {}; (selected || []).forEach(function(x){ sel[x] = true; }); box.innerHTML = '';
+    (ggTaskState.employees || []).filter(function(e){ return !Object.keys(deptSel).length || deptSel[e.department_id]; }).forEach(function(e){ var dep = e.department || ''; box.insertAdjacentHTML('beforeend', '<label class="gg-check"><input type="checkbox" class="gg-asg-chk" value="' + esc(e.id) + '"' + (sel[e.id] ? ' checked' : '') + '><span>' + esc(e.name) + (dep ? ' · ' + esc(dep) : '') + '</span></label>'); });
+}
+function ggTaskRebuildLeadOptions(preserveEmp) {
+    var deptSel = ggTaskSelectedChecks('ggDeptChecks'); var ld = document.getElementById('ggFLeadDept'); var le = document.getElementById('ggFLeadEmp'); var curDept = ld.value; var curEmp = le.value;
+    ld.innerHTML = deptSel.length ? '' : '<option value="">Сначала выберите банки-участники</option>';
+    deptSel.forEach(function(id){ var d = (ggTaskState.departments || []).find(function(x){ return x.id === id; }); ld.insertAdjacentHTML('beforeend', '<option value="' + esc(id) + '">' + esc(d ? d.name : id) + '</option>'); });
+    if (deptSel.indexOf(curDept) >= 0) ld.value = curDept; else if (deptSel.length) ld.value = deptSel[0]; else ld.value = '';
+    var leadDept = ld.value; le.innerHTML = '<option value="">Не выбран</option>';
+    (ggTaskState.employees || []).filter(function(e){ return leadDept && e.department_id === leadDept; }).forEach(function(e){ le.insertAdjacentHTML('beforeend', '<option value="' + esc(e.id) + '">' + esc(e.name) + '</option>'); });
+    if (preserveEmp && curEmp) le.value = curEmp; if (le.value !== curEmp && preserveEmp && curEmp) le.value = '';
+}
+function ggTaskFillForm(task) {
+    ggTaskCurrent = ggTaskClone(task);
+    document.getElementById('ggFIcon').value = task.icon || '📋';
+    document.getElementById('ggFName').value = task.name || '';
+    document.getElementById('ggFType').value = task.task_type || '';
+    document.getElementById('ggFPocket').value = task.pocket || '';
+    ggTaskBuildStages(task.stages || []);
+    ggTaskBuildDeptChecks(ggNormList(task.department_ids));
+    ggTaskBuildAssignChecks(ggNormList(task.assignees));
+    ggTaskRebuildLeadOptions(false);
+    document.getElementById('ggFLeadDept').value = task.lead_department || document.getElementById('ggFLeadDept').value || '';
+    ggTaskRebuildLeadOptions(true);
+    document.getElementById('ggFLeadEmp').value = task.lead_employee || '';
+    ggTaskErr(''); ggTaskMask().classList.add('open');
+}
+function ggTaskLoadState() {
+    if (ggTaskState.loaded) return Promise.resolve(ggTaskState);
+    return fetch('/api/tracker/state?log_days=0', {credentials:'same-origin'}).then(function(r){ return r.json(); }).then(function(d){
+        if (!d || !d.success) throw new Error('Не удалось загрузить данные задач');
+        ggTaskState.loaded = true; ggTaskState.employees = d.employees || []; ggTaskState.departments = d.departments || []; ggTaskState.tasksById = {};
+        (d.tasks || []).forEach(function(t){ ggTaskState.tasksById[t.id] = t; }); return ggTaskState;
+    });
+}
+function ggTaskOpen(taskId) {
+    ggTaskLoadState().then(function(){ var t = ggTaskState.tasksById[taskId]; if (!t) throw new Error('Задача не найдена'); ggTaskFillForm(t); }).catch(function(err){ ggTaskErr(err && err.message ? err.message : 'Ошибка загрузки формы'); ggTaskMask().classList.add('open'); });
+}
+function ggTaskClose() { ggTaskMask().classList.remove('open'); ggTaskErr(''); }
+function ggTaskPayload() {
+    var t = ggTaskClone(ggTaskCurrent || {});
+    t.icon = document.getElementById('ggFIcon').value.trim() || '📋';
+    t.name = t.name || document.getElementById('ggFName').value.trim();
+    t.task_type = document.getElementById('ggFType').value;
+    t.pocket = document.getElementById('ggFPocket').value.trim();
+    t.department_ids = ggTaskSelectedChecks('ggDeptChecks');
+    t.assignees = ggTaskSelectedChecks('ggAssignChecks');
+    t.lead_department = document.getElementById('ggFLeadDept').value;
+    t.lead_employee = document.getElementById('ggFLeadEmp').value;
+    var stages = {}; Array.from(document.querySelectorAll('#ggStages input[data-stage-key]')).forEach(function(inp){ stages[inp.getAttribute('data-stage-key')] = inp.value || ''; });
+    t.stages = stages; return t;
+}
+function ggTaskSave() {
+    var body = document.getElementById('ggTaskBody'); var p = ggTaskPayload();
+    if (!p.department_ids.length) { ggTaskErr('Нужно выбрать минимум один банк-участник.'); return; }
+    if (!p.lead_department) { ggTaskErr('Нужно выбрать банк-руководитель.'); return; }
+    if (p.department_ids.indexOf(p.lead_department) < 0) { ggTaskErr('Банк-руководитель должен входить в состав участников.'); return; }
+    ggTaskErr(''); body.classList.add('gg-saving');
+    fetch('/api/tracker/task/save', { method:'POST', credentials:'same-origin', headers:{'Content-Type':'application/json'}, body: JSON.stringify(p) })
+        .then(function(r){ return r.json().then(function(d){ return {ok:r.ok, data:d}; }); })
+        .then(function(res){ body.classList.remove('gg-saving'); if (!res.ok || !res.data || !res.data.success) throw new Error((res.data && (res.data.error || res.data.message)) || 'Ошибка сохранения'); ggTaskState.loaded = false; ggTaskClose(); load(); })
+        .catch(function(err){ body.classList.remove('gg-saving'); ggTaskErr(err && err.message ? err.message : 'Ошибка сохранения'); });
 }
 
 function loadMeta() {
@@ -1052,7 +1215,7 @@ function renderDay(d) {
         html +=     '<span class="gg-ico">' + esc(t.icon || '📋') + '</span>';
         html +=     '<span class="gg-task-name gg-expandable" data-exp-tid="' + esc(t.id) + '" title="Показать банки-участники">' +
                       '<span class="gg-caret">\u25b8</span>' + esc(t.name) + '</span>';
-        html +=     '<a class="gg-edit" href="/?open_task=' + encodeURIComponent(t.id) + '" title="Редактировать" aria-label="Редактировать" onclick="event.stopPropagation()">\u270f\ufe0f</a>';
+        html +=     '<button type="button" class="gg-edit" data-edit-tid="' + esc(t.id) + '" title="Редактировать" aria-label="Редактировать">\u270f\ufe0f</button>';
         html +=   '</div>';
         html +=   '<div class="gg-track" style="width:' + trackW + 'px">';
         html +=     '<div class="gg-bar gg-bar-' + cls + '" style="left:' + barLeft + 'px;width:' + barWidth + 'px" title="' + esc(title) + '">';
@@ -1169,7 +1332,7 @@ function renderWeek(d) {
         html +=     '<span class="gg-ico">' + esc(t.icon || '📋') + '</span>';
         html +=     '<span class="gg-task-name gg-expandable" data-exp-tid="' + esc(t.id) + '" title="Показать банки-участники">' +
                       '<span class="gg-caret">\u25b8</span>' + esc(t.name) + '</span>';
-        html +=     '<a class="gg-edit" href="/?open_task=' + encodeURIComponent(t.id) + '" title="Редактировать" aria-label="Редактировать" onclick="event.stopPropagation()">\u270f\ufe0f</a>';
+        html +=     '<button type="button" class="gg-edit" data-edit-tid="' + esc(t.id) + '" title="Редактировать" aria-label="Редактировать">\u270f\ufe0f</button>';
         html +=   '</div>';
         html +=   '<div class="gg-track" style="width:' + trackW + 'px">';
         /* По каждой неделе — цвет этапа, активного в понедельник (свёрнуто = x1) */
@@ -1330,6 +1493,19 @@ document.getElementById('fTeam').addEventListener('change', load);
 document.getElementById('fStatus').addEventListener('change', load);
 document.getElementById('fView').addEventListener('change', load);
 document.getElementById('fType').addEventListener('change', load);
+
+document.getElementById('ggTaskClose').addEventListener('click', ggTaskClose);
+document.getElementById('ggTaskCancel').addEventListener('click', ggTaskClose);
+document.getElementById('ggTaskSave').addEventListener('click', ggTaskSave);
+document.getElementById('ggTaskMask').addEventListener('click', function(ev){ if (ev.target === this) ggTaskClose(); });
+document.getElementById('ggDeptChecks').addEventListener('change', function(){ var keepAsg = ggTaskSelectedChecks('ggAssignChecks'); ggTaskBuildAssignChecks(keepAsg); ggTaskRebuildLeadOptions(false); });
+document.getElementById('ggFLeadDept').addEventListener('change', function(){ ggTaskRebuildLeadOptions(false); });
+document.addEventListener('click', function(ev) {
+    var ed = ev.target.closest ? ev.target.closest('.gg-edit[data-edit-tid]') : null;
+    if (!ed) return;
+    ev.preventDefault(); ev.stopPropagation();
+    ggTaskOpen(ed.getAttribute('data-edit-tid'));
+});
 
 msInit();
 initDates();
