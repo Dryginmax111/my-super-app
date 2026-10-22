@@ -657,6 +657,9 @@ body.trk-theme-light .gg-bank-cell.lvl3 { background:#fcdada; color:#9b1c1c; }
         <div class="it" style="margin-left:auto;font-style:italic;">Сегодняшний день выделен зелёным</div>
     </div>
     <div class="banks-title" id="banksTitle" style="display:none;">Нагрузка по тер банкам</div>
+    <div class="gantt-box" id="banksBox" style="display:none;">
+        <div class="loading">Загрузка…</div>
+    </div>
     <div class="gg-modal-mask" id="ggTaskMask">
     <div class="gg-modal" role="dialog" aria-modal="true" aria-labelledby="ggTaskTitle">
         <div class="gg-modal-head">
