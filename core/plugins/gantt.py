@@ -111,6 +111,39 @@ body {
 }
 .head button.apply:hover { transform: scale(1.05); }
 
+/* Мультивыбор-дропдаун (карман / тер банк) — как в Excel */
+.ms-dd { position: relative; display: inline-block; font-size: 0.82rem; }
+.ms-dd-btn {
+    padding: 6px 26px 6px 10px; border-radius: 8px;
+    border: 1px solid var(--pg-input-border, rgba(245,215,110,0.26));
+    background: var(--pg-input-bg, #232323); color: var(--pg-text, #e8e8e8);
+    font-family: inherit; font-size: 0.82rem; cursor: pointer;
+    min-width: 120px; max-width: 220px; text-align: left;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; position: relative;
+}
+.ms-dd-btn::after {
+    content: '▾'; position: absolute; right: 9px; top: 50%;
+    transform: translateY(-50%); color: var(--pg-meta, #a0a0a0); font-size: 0.7rem;
+}
+.ms-dd-btn:hover { border-color: var(--pg-accent, #f5d76e); }
+.ms-dd.open .ms-dd-btn { border-color: var(--pg-accent, #f5d76e); }
+.ms-dd-panel {
+    display: none; position: absolute; z-index: 50; top: calc(100% + 4px); left: 0;
+    min-width: 100%; max-height: 260px; overflow-y: auto;
+    background: var(--pg-input-bg, #232323);
+    border: 1px solid var(--pg-accent, #f5d76e); border-radius: 8px;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.4); padding: 4px;
+}
+.ms-dd.open .ms-dd-panel { display: block; }
+.ms-dd-item {
+    display: flex; align-items: center; gap: 8px; padding: 6px 8px;
+    border-radius: 6px; cursor: pointer; color: var(--pg-text, #e8e8e8);
+    white-space: nowrap;
+}
+.ms-dd-item:hover { background: var(--pg-accent-bg, rgba(245,215,110,0.14)); }
+.ms-dd-item input { margin: 0; cursor: pointer; }
+.ms-dd-empty { padding: 8px; color: var(--pg-meta, #a0a0a0); font-style: italic; }
+
 /* Основной контейнер диаграммы */
 .gantt-box {
     border: 1px solid var(--pg-card-border, rgba(245,215,110,0.22));
@@ -512,8 +545,14 @@ body.trk-theme-light .gg-bank-cell.lvl0 { background:transparent; border-color:t
                 <option value="розничная">Розничная</option>
                 <option value="корпоративная">Корпоративная</option>
             </select>
-            <select id="fPocket"><option value="">Все карманы</option></select>
-            <select id="fDept"><option value="">Все тер банки</option></select>
+            <div class="ms-dd" id="fPocketDD">
+                <button type="button" class="ms-dd-btn" id="fPocketBtn">Все карманы</button>
+                <div class="ms-dd-panel" id="fPocketPanel"></div>
+            </div>
+            <div class="ms-dd" id="fDeptDD">
+                <button type="button" class="ms-dd-btn" id="fDeptBtn">Все тер банки</button>
+                <div class="ms-dd-panel" id="fDeptPanel"></div>
+            </div>
             <select id="fTeam"><option value="">Все команды</option></select>
             <label>С <input type="date" id="fFrom"></label>
             <label>По <input type="date" id="fTo"></label>
@@ -639,15 +678,96 @@ function stageAtMonday(stages, mon) {
     return null;
 }
 
+/* ---- Мультивыбор (Excel-стиль, чекбоксы) для карман / тер банк ---- */
+/* Состояние: Set выбранных значений. Пусто = «все». */
+var msSelected = { dept: {}, pocket: {} };
+/* Справочник доступных пунктов: [{value,label}] */
+var msOptions  = { dept: [], pocket: [] };
+
+function msRenderPanel(kind) {
+    var panelId = kind === 'dept' ? 'fDeptPanel' : 'fPocketPanel';
+    var panel = document.getElementById(panelId);
+    if (!panel) return;
+    var opts = msOptions[kind] || [];
+    if (!opts.length) {
+        panel.innerHTML = '<div class="ms-dd-empty">Нет вариантов</div>';
+        return;
+    }
+    var html = '';
+    opts.forEach(function(o) {
+        var checked = msSelected[kind][o.value] ? ' checked' : '';
+        html += '<label class="ms-dd-item">' +
+                '<input type="checkbox" value="' + esc(o.value) + '"' + checked + '>' +
+                '<span>' + esc(o.label) + '</span></label>';
+    });
+    panel.innerHTML = html;
+    // Клик внутри панели не должен закрывать её (мультивыбор подряд).
+    panel.addEventListener('click', function(e) { e.stopPropagation(); });
+    panel.querySelectorAll('input[type=checkbox]').forEach(function(cb) {
+        cb.addEventListener('change', function() {
+            if (cb.checked) msSelected[kind][cb.value] = true;
+            else delete msSelected[kind][cb.value];
+            msUpdateBtn(kind);
+            load();
+        });
+    });
+}
+
+function msUpdateBtn(kind) {
+    var btnId = kind === 'dept' ? 'fDeptBtn' : 'fPocketBtn';
+    var btn = document.getElementById(btnId);
+    if (!btn) return;
+    var sel = Object.keys(msSelected[kind]);
+    var allLabel = kind === 'dept' ? 'Все тер банки' : 'Все карманы';
+    if (!sel.length) { btn.textContent = allLabel; return; }
+    if (sel.length === 1) {
+        var o = (msOptions[kind] || []).find(function(x) { return x.value === sel[0]; });
+        btn.textContent = o ? o.label : sel[0];
+        return;
+    }
+    btn.textContent = 'Выбрано: ' + sel.length;
+}
+
+function msSetOptions(kind, opts) {
+    msOptions[kind] = opts || [];
+    // убираем из выбранного то, чего больше нет в списке
+    var valid = {};
+    msOptions[kind].forEach(function(o) { valid[o.value] = true; });
+    Object.keys(msSelected[kind]).forEach(function(v) {
+        if (!valid[v]) delete msSelected[kind][v];
+    });
+    msRenderPanel(kind);
+    msUpdateBtn(kind);
+}
+
+function msGetSelected(kind) { return Object.keys(msSelected[kind]); }
+
+/* Открытие/закрытие панелей по клику на кнопку и клику вне */
+function msInit() {
+    [['fDeptDD','fDeptBtn'], ['fPocketDD','fPocketBtn']].forEach(function(pair) {
+        var dd = document.getElementById(pair[0]);
+        var btn = document.getElementById(pair[1]);
+        if (!dd || !btn) return;
+        btn.addEventListener('click', function(e) {
+            e.stopPropagation();
+            var wasOpen = dd.classList.contains('open');
+            document.querySelectorAll('.ms-dd.open').forEach(function(x) { x.classList.remove('open'); });
+            if (!wasOpen) dd.classList.add('open');
+        });
+    });
+    document.addEventListener('click', function() {
+        document.querySelectorAll('.ms-dd.open').forEach(function(x) { x.classList.remove('open'); });
+    });
+}
+
 function loadMeta() {
     fetch('/api/plugins/gantt/meta', {credentials: 'same-origin'})
         .then(function(r) { return r.json(); })
         .then(function(d) {
             if (!d.success) return;
-            var ds = document.getElementById('fDept');
-            (d.departments || []).forEach(function(x) {
-                ds.insertAdjacentHTML('beforeend', '<option value="' + esc(x.id) + '">' + esc(x.name) + '</option>');
-            });
+            msSetOptions('dept', (d.departments || []).map(function(x) {
+                return { value: x.id, label: x.name };
+            }));
             var ts = document.getElementById('fTeam');
             (d.teams || []).forEach(function(x) {
                 ts.insertAdjacentHTML('beforeend', '<option value="' + esc(x.id) + '">' + esc(x.name) + '</option>');
@@ -656,17 +776,11 @@ function loadMeta() {
 }
 
 function fillPocketFilter(pockets) {
-    var sel = document.getElementById('fPocket');
-    if (!sel) return;
-    var cur = sel.value;
-    var html = '<option value="">Все карманы</option>';
+    var opts = [];
     (pockets || []).forEach(function(p) {
-        if (!p) return;
-        html += '<option value="' + esc(p) + '">' + esc(p) + '</option>';
+        if (p) opts.push({ value: p, label: p });
     });
-    sel.innerHTML = html;
-    // сохранить выбор, если он ещё есть в списке
-    if (cur && (pockets || []).indexOf(cur) !== -1) sel.value = cur;
+    msSetOptions('pocket', opts);
 }
 
 function load() {
@@ -674,16 +788,18 @@ function load() {
     box.innerHTML = '<div class="loading">Загрузка…</div>';
     var q = '?from=' + encodeURIComponent(document.getElementById('fFrom').value) +
             '&to=' + encodeURIComponent(document.getElementById('fTo').value);
-    var dep = document.getElementById('fDept').value;
-    if (dep) q += '&department=' + encodeURIComponent(dep);
+    msGetSelected('dept').forEach(function(v) {
+        q += '&department=' + encodeURIComponent(v);
+    });
     var team = document.getElementById('fTeam').value;
     if (team) q += '&team=' + encodeURIComponent(team);
     var sts = document.getElementById('fStatus').value;
     if (sts) q += '&status=' + encodeURIComponent(sts);
     var fty = document.getElementById('fType').value;
     if (fty) q += '&task_type=' + encodeURIComponent(fty);
-    var fpk = document.getElementById('fPocket').value;
-    if (fpk) q += '&pocket=' + encodeURIComponent(fpk);
+    msGetSelected('pocket').forEach(function(v) {
+        q += '&pocket=' + encodeURIComponent(v);
+    });
     fetch('/api/plugins/gantt/data' + q, {credentials: 'same-origin'})
         .then(function(r) { return r.json(); })
         .then(function(d) {
@@ -1065,12 +1181,11 @@ function renderBanks(d, weeks, STAGE_COLORS, STAGE_LABELS) {
 
 /* --- Запуск --- */
 document.getElementById('fApply').addEventListener('click', load);
-document.getElementById('fDept').addEventListener('change', load);
 document.getElementById('fTeam').addEventListener('change', load);
 document.getElementById('fStatus').addEventListener('change', load);
 document.getElementById('fView').addEventListener('change', load);
 document.getElementById('fType').addEventListener('change', load);
-document.getElementById('fPocket').addEventListener('change', load);
+msInit();
 initDates();
 loadMeta();
 load();
@@ -1149,11 +1264,22 @@ def register(app, db, hooks):
         if (d2 - d1).days > 190:
             d2 = d1 + timedelta(days=190)
 
-        dept = request.args.get('department', '').strip()
+        # Мультивыбор: department/pocket приходят либо повторами параметра
+        # (?department=a&department=b), либо одним CSV (?department=a,b).
+        def _multi(name):
+            vals = request.args.getlist(name)
+            out_v = []
+            for v in vals:
+                for part in (v or '').split(','):
+                    part = part.strip()
+                    if part and part not in out_v:
+                        out_v.append(part)
+            return out_v
+        dept_sel = _multi('department')      # список выбранных банков (пусто = все)
         team = request.args.get('team', '').strip()
         status = request.args.get('status', '').strip()
         f_type = request.args.get('task_type', '').strip()
-        f_pocket = request.args.get('pocket', '').strip()
+        pocket_sel = _multi('pocket')        # список выбранных карманов (пусто = все)
 
         data = db.load_all()
 
@@ -1168,9 +1294,11 @@ def register(app, db, hooks):
         # Сотрудники выбранного банка — нужны для fallback-привязки
         # (задача без прямой привязки task_departments относится к банку
         # через отделы своих исполнителей — как в app._task_matches_dept).
+        dept_sel_set = set(dept_sel)
         dept_emp_ids = set()
-        if dept:
-            dept_emp_ids = set(e['id'] for e in data.get('employees', []) if e.get('department_id') == dept)
+        if dept_sel_set:
+            dept_emp_ids = set(e['id'] for e in data.get('employees', [])
+                               if e.get('department_id') in dept_sel_set)
 
         # Карта сотрудник -> тер банк (отдел) для расчёта нагрузки по банкам.
         emp_dept = {e['id']: (e.get('department_id') or '') for e in data.get('employees', [])}
@@ -1198,15 +1326,17 @@ def register(app, db, hooks):
                 continue
             if f_type and (t.get('task_type') or '') != f_type:
                 continue
-            if f_pocket and (t.get('pocket') or '') != f_pocket:
+            if pocket_sel and (t.get('pocket') or '') not in pocket_sel:
                 continue
             assigns = t.get('assignees') or []
             if team_ids is not None and not (set(assigns) & team_ids):
                 continue
-            if dept:
+            if dept_sel_set:
                 t_dep_ids = t.get('department_ids') or []
-                if dept in t_dep_ids:
-                    pass  # прямая привязка к банку
+                # OR: задача проходит, если хоть один выбранный банк в прямой привязке,
+                # либо (нет прямой привязки) — по отделам исполнителей.
+                if dept_sel_set & set(t_dep_ids):
+                    pass  # прямая привязка к одному из выбранных банков
                 elif not t_dep_ids and (set(assigns) & dept_emp_ids):
                     pass  # fallback: нет прямой привязки -> по отделам исполнителей
                 else:
@@ -1257,8 +1387,14 @@ def register(app, db, hooks):
         pockets = sorted({(_t.get('pocket') or '').strip()
                           for _t in data.get('tasks', [])
                           if (_t.get('pocket') or '').strip()})
-        # Тер банки, встречающиеся в отфильтрованной выборке (для второй таблицы).
-        bank_ids = sorted({did for _o in out for did in _o['dept_ids']})
+        # Тер банки для второй таблицы ("Нагрузка по банкам").
+        # Вариант A: если банки выбраны в фильтре — строки = ТОЛЬКО выбранные
+        # (и только те из них, что реально встречаются в выборке задач);
+        # если фильтр банков пуст — все банки, присутствующие в выборке.
+        present = {did for _o in out for did in _o['dept_ids']}
+        if dept_sel_set:
+            present = present & dept_sel_set
+        bank_ids = sorted(present)
         banks = [{'id': bid, 'name': dept_name.get(bid, bid)} for bid in bank_ids]
         return jsonify({
             'success': True,
