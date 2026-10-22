@@ -2,4 +2,4 @@ __pycache__/
 *.pyc
 tools/wheels/
 #task_tracker.db
-task_tracker.db-journal
+#task_tracker.db-journal
