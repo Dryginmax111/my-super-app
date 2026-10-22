@@ -574,6 +574,13 @@ body.login-body {
 }
 .assignees-dot, .dept-multi-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
 .assignees-hint { font-size: 0.72rem; color: var(--trk-meta); margin-top: 4px; font-style: italic; }
+.lead-row { display: flex; gap: 12px; flex-wrap: wrap; }
+.lead-col { flex: 1 1 200px; min-width: 180px; }
+.lead-sub { font-size: 0.74rem; color: var(--trk-meta); margin-bottom: 4px; }
+.lead-req { color: #e53935; font-weight: 700; }
+.lead-select { width: 100%; padding: 7px 10px; border-radius: 8px; border: 1px solid var(--trk-border); background: var(--trk-input-bg, #fff); color: var(--trk-text); font-size: 0.86rem; }
+.lead-select:disabled { opacity: 0.55; cursor: not-allowed; }
+.lead-select.lead-invalid { border-color: #e53935; box-shadow: 0 0 0 2px rgba(229,57,53,.15); }
 .no-has .assignees-item input[type="checkbox"], .no-has .dept-multi-item input[type="checkbox"] {
     position: static; opacity: 1; width: auto; height: auto;
     accent-color: var(--trk-accent); margin: 0;

@@ -491,6 +491,19 @@
         <div class="assignees-list" id="taskAssigneesList"></div>
         <div class="assignees-hint" id="taskAssigneesHint"></div>
     </div>
+    <div class="form-group"><label>👑 Руководитель проверки</label>
+        <div class="lead-row">
+            <div class="lead-col">
+                <div class="lead-sub">Банк-руководитель <span class="lead-req">*</span></div>
+                <select id="task_lead_department" class="lead-select"></select>
+            </div>
+            <div class="lead-col">
+                <div class="lead-sub">Сотрудник (необязательно)</div>
+                <select id="task_lead_employee" class="lead-select"></select>
+            </div>
+        </div>
+        <div class="assignees-hint" id="taskLeadHint">Банк — из выбранных участников. Сотрудник — из этого банка.</div>
+    </div>
     <div class="modal-actions">
         <button class="btn btn-secondary" data-close="taskModal">Отмена</button>
         <button class="btn btn-primary" id="saveTaskBtn">💾 Сохранить</button>

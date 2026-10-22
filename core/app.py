@@ -902,6 +902,17 @@ def create_app():
                 print('[INIT] tasks.%s добавлено' % _sc)
     except Exception as _e:
         print(f'[INIT] migration task stages: {_e}')
+    # PATCH tasks-lead — миграция: руководитель проверки (банк + сотрудник) в tasks
+    try:
+        cols = [r['name'] for r in db.query('PRAGMA table_info(tasks)')]
+        if 'lead_department' not in cols:
+            db.exec("ALTER TABLE tasks ADD COLUMN lead_department TEXT DEFAULT ''")
+            print('[INIT] tasks.lead_department добавлено')
+        if 'lead_employee' not in cols:
+            db.exec("ALTER TABLE tasks ADD COLUMN lead_employee TEXT DEFAULT ''")
+            print('[INIT] tasks.lead_employee добавлено')
+    except Exception as _e:
+        print(f'[INIT] migration task lead: {_e}')
     # PATCH v1.0.4 — миграция: JSON-поля в work_logs
     try:
         cols = [r['name'] for r in db.query('PRAGMA table_info(work_logs)')]
@@ -1358,6 +1369,9 @@ def create_app():
         if task_type not in _TASK_TYPES:
             task_type = ''
         pocket = str(body.get('pocket', '')).strip()[:200]
+        # PATCH tasks-lead: руководитель проверки (банк обязателен, сотрудник опц.)
+        lead_department = str(body.get('lead_department', '')).strip()
+        lead_employee = str(body.get('lead_employee', '')).strip()
         _stages_raw = body.get('stages') or {}
         if not isinstance(_stages_raw, dict):
             _stages_raw = {}
@@ -1459,6 +1473,26 @@ def create_app():
         else:
             assignees = [a for a in assignees if a in valid_emps]
 
+        # PATCH tasks-lead: руководитель проверки.
+        # Банк-руководитель обязателен и должен быть среди банков-участников.
+        # Сотрудник-руководитель опционален; если задан — должен работать
+        # в банке-руководителе.
+        if not dep_ids:
+            return jsonify({'success': False,
+                            'error': 'Нужно выбрать минимум один банк-участник'}), 400
+        if not lead_department:
+            return jsonify({'success': False,
+                            'error': 'Укажите банк-руководитель проверки'}), 400
+        if lead_department not in dep_ids:
+            return jsonify({'success': False,
+                            'error': 'Банк-руководитель должен быть среди банков-участников'}), 400
+        if lead_employee:
+            _emp_by_id = {e['id']: e for e in data['employees']}
+            _le = _emp_by_id.get(lead_employee)
+            if not _le or _le.get('department_id') != lead_department:
+                # Сотрудник не из банка-руководителя — не критично, просто сбрасываем
+                lead_employee = ''
+
         # PATCH 19 — проверка дубликатов имён задач (только при создании)
         if not task_id:
             def _norm_name(s):
@@ -1553,6 +1587,8 @@ def create_app():
                 'orders': orders,
                 'task_type': task_type,
                 'pocket': pocket,
+                'lead_department': lead_department,
+                'lead_employee': lead_employee,
                 'stages': stages,
             })
         except ValueError as _ve:

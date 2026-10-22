@@ -2691,6 +2691,7 @@ function renderTaskDepartmentsList(selectedIds) {
     list.querySelectorAll('input[type="checkbox"]').forEach(function(cb) {
         cb.addEventListener('change', function() {
             renderAssigneesList(getSelectedAssignees(), getSelectedTaskDepartments());
+            renderTaskLead();
         });
     });
 }
@@ -2770,6 +2771,51 @@ function renderAssigneesList(selectedIds, deptIds) {
         _group('⭐', 'Руководители команд', managers, 'Менеджер', 'asg-managers') +
         _group('👤', 'Сотрудники', others, '', 'asg-others');
 }
+/* PATCH tasks-lead: руководитель проверки (банк из участников + сотрудник из банка) */
+function renderTaskLead(selDep, selEmp) {
+    var depSel = $('task_lead_department');
+    var empSel = $('task_lead_employee');
+    if (!depSel || !empSel) return;
+    var chosen = getSelectedTaskDepartments();           // выбранные банки-участники
+    var deps = (state.departments || []).filter(function(d){ return chosen.indexOf(d.id) !== -1; });
+    // банк-руководитель
+    var curDep = (typeof selDep !== 'undefined' && selDep !== null) ? selDep : depSel.value;
+    if (chosen.indexOf(curDep) === -1) curDep = '';
+    if (!deps.length) {
+        depSel.innerHTML = '<option value="">— сначала выберите банки-участники —</option>';
+        depSel.value = ''; depSel.disabled = true;
+    } else {
+        depSel.disabled = false;
+        depSel.innerHTML = '<option value="">— выберите банк —</option>'
+            + deps.map(function(d){
+                return '<option value="' + escapeHtml(d.id) + '">' + escapeHtml(d.name) + '</option>';
+              }).join('');
+        depSel.value = curDep || '';
+    }
+    depSel.classList.remove('lead-invalid');
+    // сотрудник-руководитель: из выбранного банка-руководителя
+    renderTaskLeadEmployees((typeof selEmp !== 'undefined') ? selEmp : empSel.value);
+}
+function renderTaskLeadEmployees(selEmp) {
+    var depSel = $('task_lead_department');
+    var empSel = $('task_lead_employee');
+    if (!depSel || !empSel) return;
+    var dep = depSel.value;
+    if (!dep) {
+        empSel.innerHTML = '<option value="">— сначала выберите банк —</option>';
+        empSel.value = ''; empSel.disabled = true;
+        return;
+    }
+    var emps = (state.employees || []).filter(function(e){ return e.department_id === dep; });
+    empSel.disabled = false;
+    empSel.innerHTML = '<option value="">— не назначен —</option>'
+        + emps.map(function(e){
+            return '<option value="' + escapeHtml(e.id) + '">' + escName(e.name) + (e.fired ? ' 🚪' : '') + '</option>';
+          }).join('');
+    empSel.value = (selEmp && emps.some(function(e){return e.id===selEmp;})) ? selEmp : '';
+}
+on('task_lead_department', 'change', function(){ renderTaskLeadEmployees(''); this.classList.remove('lead-invalid'); });
+
 function getSelectedAssignees() {
     var list = $('taskAssigneesList'); if (!list) return [];
     var out = [];
@@ -3045,6 +3091,8 @@ function openTaskModal(task) {
     var depIds = (task && task.department_ids) ? task.department_ids.slice() : [];
     renderTaskDepartmentsList(depIds);
     renderAssigneesList((task && task.assignees) || [], depIds);
+    // PATCH tasks-lead: руководитель проверки
+    renderTaskLead((task && task.lead_department) || '', (task && task.lead_employee) || '');
     syncTaskCompletedAt();
     var m = $('taskModal'); if (m) m.classList.add('active');
     setTimeout(function() { var n = $('task_name'); if (n) n.focus(); }, 50);
@@ -3060,6 +3108,14 @@ function saveTask() {
         });
         notify('❌ Этапы пересекаются: ' + _names.join(', ') + '. Начало каждого следующего этапа должно быть позже предыдущего.', 'error');
         renderTaskStages();
+        return;
+    }
+    // PATCH tasks-lead: банк-руководитель обязателен
+    var _leadDepEl = $('task_lead_department');
+    var _leadDep = _leadDepEl ? _leadDepEl.value : '';
+    if (!_leadDep) {
+        notify('❌ Укажите банк-руководитель проверки', 'error');
+        if (_leadDepEl) _leadDepEl.classList.add('lead-invalid');
         return;
     }
     var status = $('task_status') ? $('task_status').value : 'active';
@@ -3078,6 +3134,8 @@ function saveTask() {
         tags: (_tagDraft || []).slice(),
         assignees: getSelectedAssignees(),
         department_ids: getSelectedTaskDepartments(),
+        lead_department: $('task_lead_department') ? $('task_lead_department').value : '',
+        lead_employee: $('task_lead_employee') ? $('task_lead_employee').value : '',
         is_urgent: $('task_is_urgent') ? !!$('task_is_urgent').checked : false,
         links: (_taskLinksDraft || []).slice(),
         orders: (_taskOrdersDraft || []).slice(),

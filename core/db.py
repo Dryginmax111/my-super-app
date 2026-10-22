@@ -529,6 +529,9 @@ class TrackerDB:
                 'Тип задачи обязателен и должен быть одним из: %s'
                 % ', '.join(TASK_TYPES))
         _pocket = str(payload.get('pocket') or '').strip()
+        # Руководитель проверки: банк (обязателен на уровне API) + сотрудник (опц.)
+        _lead_dep = str(payload.get('lead_department') or '').strip()
+        _lead_emp = str(payload.get('lead_employee') or '').strip()
         with self.transaction() as tx:
             if row:
                 _links_json = json.dumps(payload.get('links') or [], ensure_ascii=False)
@@ -537,12 +540,12 @@ class TrackerDB:
                 tx.exec(
                     'UPDATE tasks SET name=?, icon=?, description=?, status=?, start_date=?, '
                     'deadline=?, completed_at=?, folder=?, order_ref=?, is_urgent=?, links_json=?, orders_json=?, '
-                    'task_type=?, pocket=?, ' + _stage_set + ' WHERE id=?',
+                    'task_type=?, pocket=?, lead_department=?, lead_employee=?, ' + _stage_set + ' WHERE id=?',
                     (payload['name'], payload['icon'], payload['description'], payload['status'],
                      payload['start_date'], payload['deadline'], payload['completed_at'],
                      payload['folder'], payload['order_ref'],
                      1 if payload.get('is_urgent') else 0, _links_json, _orders_json,
-                     _task_type, _pocket, *_stage_vals, task_id))
+                     _task_type, _pocket, _lead_dep, _lead_emp, *_stage_vals, task_id))
                 created = False
             else:
                 _links_json = json.dumps(payload.get('links') or [], ensure_ascii=False)
@@ -552,13 +555,13 @@ class TrackerDB:
                 tx.exec(
                     'INSERT INTO tasks (id,name,icon,description,status,start_date,deadline,'
                     'completed_at,folder,order_ref,is_urgent,links_json,orders_json,'
-                    'task_type,pocket,' + _stage_cols_sql + ',created_at) '
-                    'VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,' + _stage_ph + ',?)',
+                    'task_type,pocket,lead_department,lead_employee,' + _stage_cols_sql + ',created_at) '
+                    'VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,' + _stage_ph + ',?)',
                     (task_id, payload['name'], payload['icon'], payload['description'],
                      payload['status'], payload['start_date'], payload['deadline'],
                      payload['completed_at'], payload['folder'], payload['order_ref'],
                      1 if payload.get('is_urgent') else 0, _links_json, _orders_json,
-                     _task_type, _pocket, *_stage_vals,
+                     _task_type, _pocket, _lead_dep, _lead_emp, *_stage_vals,
                      payload['created_at']))
                 created = True
             tx.exec('DELETE FROM task_tags WHERE task_id=?', (task_id,))
