@@ -8555,13 +8555,13 @@ loadState().then(function() {
         b.textContent = '➕';
         b.addEventListener('click', function(e) {
             e.preventDefault();
-            // Новая задача → сначала спросить тип (аудит/другое), не открывать карточку напрямую
+            // Новая задача → ВСЕГДА спрашиваем тип (аудит/другое), карточку напрямую не открываем
             if (typeof window.__trkOpenTaskKindChooser === 'function') {
                 window.__trkOpenTaskKindChooser();
             } else {
                 var alt = document.getElementById('addTaskBtn2') || document.getElementById('addTaskBtn');
                 if (alt) alt.click();
-                else if (typeof window.__trkOpenTaskModal === 'function') window.__trkOpenTaskModal(null);
+                // НЕ открываем карточку напрямую: без выбора типа форма не имеет смысла
             }
         });
         document.body.appendChild(b);

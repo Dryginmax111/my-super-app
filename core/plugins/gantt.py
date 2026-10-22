@@ -87,7 +87,7 @@ body {
 }
 .head label { font-size: 0.75rem; color: var(--pg-meta, #a0a0a0); display: inline-flex; align-items: center; gap: 4px; }
 .ms-dd-group { display: inline-flex; flex-direction: column; gap: 2px; }
-.ms-dd-label { font-size: 0.62rem; letter-spacing: .04em; text-transform: uppercase; color: var(--pg-accent, #f5d76e); font-weight: 700; padding-left: 2px; }
+.ms-dd-label { font-size: 0.62rem; letter-spacing: .04em; text-transform: uppercase; color: var(--pg-muted, #6b7280); font-weight: 700; padding-left: 2px; display: block; margin-bottom: 2px; }
 .head input[type="date"],
 .head select {
     padding: 6px 10px;
@@ -1160,6 +1160,7 @@ function renderDay(d) {
 
     if (!tasks.length) {
         box.innerHTML = '<div class="empty">Нет задач за выбранный период</div>';
+        clearBanks();
         return;
     }
     if (!days.length) {
@@ -1294,7 +1295,7 @@ function renderWeek(d) {
     var days = d.days || [];
     var today = d.today || '';
 
-    if (!tasks.length) { box.innerHTML = '<div class="empty">Нет задач за выбранный период</div>'; return; }
+    if (!tasks.length) { box.innerHTML = '<div class="empty">Нет задач за выбранный период</div>'; clearBanks(); return; }
     if (!days.length) { box.innerHTML = '<div class="empty">Пустой диапазон дат</div>'; return; }
 
     var STAGE_ORDER = ['подготовка','проверка_нжя','проверка_соглЦА','ос_проф','реализация_возражения','реализация_согласования','запас','оценка_тб'];
@@ -1398,6 +1399,12 @@ function renderWeek(d) {
    этапов всех задач банка, активных в этом периоде, с коэффициентом
    руководителя (x2 розн / x1.5 корп у банка-руководителя). mode='week'|'day'.
    Фильтры уже применены на бэке. */
+function clearBanks() {
+    var t = document.getElementById('banksTitle');
+    var b = document.getElementById('banksBox');
+    if (t) t.style.display = 'none';
+    if (b) { b.style.display = 'none'; b.innerHTML = ''; }
+}
 function renderBanks(d, periods, mode, cellW, STAGE_COLORS, STAGE_LABELS) {
     var titleEl = document.getElementById('banksTitle');
     var box = document.getElementById('banksBox');
@@ -1584,7 +1591,9 @@ def register(app, db, hooks):
 
     @app.route('/plugins-assets/gantt.js', methods=['GET'])
     def _g_js():
-        return app.response_class(_JS, mimetype='application/javascript')
+        resp = app.response_class(_JS, mimetype='application/javascript')
+        resp.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+        return resp
 
     @app.route('/plugins/gantt/', methods=['GET'])
     def _g_page():
@@ -1597,7 +1606,9 @@ def register(app, db, hooks):
                 return redirect('/')
         except Exception:
             return redirect('/login')
-        return Response(_page_html(), mimetype='text/html')
+        resp = Response(_page_html(), mimetype='text/html')
+        resp.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+        return resp
 
     @app.route('/api/plugins/gantt/meta', methods=['GET'])
     def _g_meta():
