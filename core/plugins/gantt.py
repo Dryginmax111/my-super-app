@@ -324,6 +324,10 @@ body.trk-theme-light .gg-edit:hover { background:#dceadc; }
     font-size: 0.82rem;
     color: var(--pg-text, #e8e8e8);
 }
+.gg-task-name.gg-expandable {
+    font-size: 0.92rem;
+    font-style: italic;
+}
 
 .gg-track {
     position: relative;
@@ -526,12 +530,25 @@ body.trk-theme-light .gg-wk-week { color:#212121; }
     transition: transform 0.12s ease;
 }
 .gg-row.gg-sub-row { background: rgba(255,255,255,0.025); }
-.gg-row.gg-sub-row .gg-name { padding-left: 10px; }
-.gg-sub-name .gg-sub-bullet { margin-right: 6px; opacity: 0.8; }
+.gg-row.gg-sub-row .gg-name { padding-left: 18px; }
+.gg-sub-name .gg-sub-bullet { margin-right: 10px; opacity: 0.75; }
+.gg-sub-name .gg-task-name { padding-left: 14px; }
+.gg-sub-mark { margin-left: auto; flex: 0 0 auto; opacity: 0.92; font-size: 0.95rem; }
 .gg-row.gg-sub-lead { background: rgba(245,215,110,0.07); }
 .gg-row.gg-sub-lead .gg-task-name { font-weight: 700; }
 body.trk-theme-light .gg-row.gg-sub-row { background: rgba(0,0,0,0.03); }
 body.trk-theme-light .gg-row.gg-sub-lead { background: rgba(245,215,110,0.14); }
+.gg-bank-cell.gg-offday {
+    background: repeating-linear-gradient(-45deg, rgba(140,140,140,0.18) 0 6px, rgba(140,140,140,0.08) 6px 12px) !important;
+    color: transparent !important;
+    text-shadow: none !important;
+    border-color: rgba(160,160,160,0.18) !important;
+}
+body.trk-theme-light .gg-bank-cell.gg-offday {
+    background: repeating-linear-gradient(-45deg, rgba(180,180,180,0.30) 0 6px, rgba(230,230,230,0.75) 6px 12px) !important;
+    color: transparent !important;
+    border-color: rgba(160,160,160,0.35) !important;
+}
 /* Тепловая заливка по величине нагрузки */
 .gg-bank-cell.lvl0 { background: transparent; border-color: transparent; color: var(--pg-meta,#888); }
 .gg-bank-cell.lvl1 { background: rgba(129,199,132,0.28); color:#dfeede; }  /* <2 — светло-зелёный */
@@ -724,6 +741,14 @@ function round2(v) { return Math.round(v * 100) / 100; }
 /* Множество раскрытых задач (id). Клик по названию переключает. */
 var ggExpanded = {};
 var ggDeptNames = {};
+var ggHolidays = {};
+
+function isOffDay(iso) {
+    if (!iso) return false;
+    var dt = new Date(iso + 'T00:00:00');
+    var wd = dt.getDay();
+    return wd === 0 || wd === 6 || !!ggHolidays[iso];
+}
 
 /* Подстроки «банки-участники» задачи для верхней таблицы.
    mode='week' -> периоды=weeks (у каждого .mon), mode='day' -> периоды=days (iso).
@@ -747,8 +772,9 @@ function participantRowsHtml(t, periods, mode, trackW, cellW) {
         var nm = ggDeptNames[did] || did;
         html += '<div class="gg-row gg-sub-row' + (isLead ? ' gg-sub-lead' : '') + '">';
         html +=   '<div class="gg-name gg-sub-name">';
-        html +=     '<span class="gg-sub-bullet">' + (isLead ? '\ud83d\udc51' : '\u2514') + '</span>';
+        html +=     '<span class="gg-sub-bullet">•</span>';
         html +=     '<span class="gg-task-name" title="' + esc(nm) + '">' + esc(nm) + '</span>';
+        html +=     '<span class="gg-sub-mark">' + (isLead ? '\ud83d\udc51' : '\ud83d\ude42') + '</span>';
         html +=   '</div>';
         html +=   '<div class="gg-track" style="width:' + trackW + 'px">';
         periods.forEach(function(p, i) {
@@ -904,6 +930,7 @@ function load() {
 function render(d) {
     window.__ggLastData = d;
     ggDeptNames = d.dept_names || {};
+    ggHolidays = d.holidays || {};
     var view = document.getElementById('fView').value;
     if (view === 'week') { renderWeek(d); }
     else { renderDay(d); }
@@ -1280,12 +1307,14 @@ function renderBanks(d, periods, mode, cellW, STAGE_COLORS, STAGE_LABELS) {
         html +=   '</div>';
         html +=   '<div class="gg-track" style="width:' + trackW + 'px">';
         periods.forEach(function(p, i) {
+            var key = pMon(p);
+            var off = (!isWeek && isOffDay(key));
             var v = load[b.id][i];
             var txt = round2(v).toString();
             var lvl = 0;
-            if (v > 0) { lvl = v >= 3 ? 3 : (v < 2 ? 1 : 2); }
+            if (!off && v > 0) { lvl = v >= 3 ? 3 : (v < 2 ? 1 : 2); }
             var lbl = isWeek ? ('неделя ' + fmtD(p.mon) + '–' + fmtD(p.sun)) : fmtD(p);
-            html += '<div class="gg-bank-cell lvl' + lvl + '" style="left:' + (i * cellW + 2) + 'px;width:' + (cellW - 4) + 'px" title="' + esc(b.name) + ' · ' + lbl + ' · нагрузка ' + txt + '">' + (v > 0 ? txt : '') + '</div>';
+            html += '<div class="gg-bank-cell lvl' + lvl + (off ? ' gg-offday' : '') + '" style="left:' + (i * cellW + 2) + 'px;width:' + (cellW - 4) + 'px" title="' + esc(b.name) + ' · ' + lbl + (off ? ' · выходной/праздник' : (' · нагрузка ' + txt)) + '">' + (!off && v > 0 ? txt : '') + '</div>';
         });
         html +=   '</div>';
         html += '</div>';
@@ -1538,6 +1567,7 @@ def register(app, db, hooks):
             'pockets': pockets,
             'banks': banks,
             'dept_names': dept_name,
+            'holidays': data.get('holidays') or {},
         })
 
     def on_startup(**ctx):
