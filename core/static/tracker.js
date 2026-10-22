@@ -3128,11 +3128,32 @@ function renderTaskStages() {
     });
 }
 
-function openTaskModal(task) {
+function openTaskKindChooser() {
+    var m = $('taskKindModal'); if (m) m.classList.add('active');
+}
+/* Показ/скрытие полей карточки по виду задачи: 'audit' | 'other'. */
+function applyTaskKindUI(kind) {
+    var isOther = (kind === 'other');
+    document.querySelectorAll('#taskModal .tk-audit-only').forEach(function(el) {
+        el.style.display = isOther ? 'none' : '';
+    });
+    document.querySelectorAll('#taskModal .tk-other-only').forEach(function(el) {
+        el.style.display = isOther ? '' : 'none';
+    });
+}
+function openTaskModal(task, forceKind) {
     task = task || null;
-    var t = $('taskModalTitle'); if (t) t.textContent = task ? 'Редактировать задачу' : 'Новая задача';
+    var kind = forceKind || (task && task.task_kind) || 'audit';
+    if (kind !== 'other') kind = 'audit';
+    var _kindEl = $('task_kind'); if (_kindEl) _kindEl.value = kind;
+    var titleTxt = task
+        ? (kind === 'other' ? 'Редактировать задачу' : 'Карточка аудиторской проверки')
+        : (kind === 'other' ? 'Новая задача' : 'Карточка аудиторской проверки');
+    var t = $('taskModalTitle'); if (t) t.textContent = titleTxt;
     var g = function(id, v) { var el = $(id); if (el) el.value = v; };
     g('task_id', task ? task.id : '');
+    g('task_load_coef', (task && task.load_coef) ? task.load_coef : '');
+    applyTaskKindUI(kind);
     var iconVal = (task && task.icon) || '🚀';
     g('task_icon', iconVal);
     var prev = $('taskIconPreview'); if (prev) prev.textContent = iconVal;
@@ -3186,23 +3207,39 @@ function openTaskModal(task) {
 function saveTask() {
     var name = $('task_name') ? $('task_name').value.trim() : '';
     if (!name) { notify('❌ Укажите название', 'error'); return; }
-    // PATCH tasks-stages: запрет пересечения этапов
-    var _stConf = _taskStagesConflicts();
-    if (_stConf.length) {
-        var _names = _stConf.sort(function(a,b){return a-b;}).map(function(i){
-            return TASK_STAGE_LABELS[TASK_STAGE_ORDER[i]] || TASK_STAGE_ORDER[i];
-        });
-        notify('❌ Этапы пересекаются: ' + _names.join(', ') + '. Начало каждого следующего этапа должно быть позже предыдущего.', 'error');
-        renderTaskStages();
-        return;
-    }
-    // PATCH tasks-lead: банк-руководитель обязателен
-    var _leadDepEl = $('task_lead_department');
-    var _leadDep = _leadDepEl ? _leadDepEl.value : '';
-    if (!_leadDep) {
-        notify('❌ Укажите банк-руководитель проверки', 'error');
-        if (_leadDepEl) _leadDepEl.classList.add('lead-invalid');
-        return;
+    var _taskKind = $('task_kind') ? ($('task_kind').value || 'audit') : 'audit';
+    var _isOther = (_taskKind === 'other');
+    var _leadDep = '';
+    var _loadCoef = 0;
+    if (_isOther) {
+        // «Другое»: этапы/руководитель не нужны; обязателен коэффициент нагрузки.
+        var _lcEl = $('task_load_coef');
+        var _lcRaw = _lcEl ? (_lcEl.value || '').trim().replace(',', '.') : '';
+        _loadCoef = parseFloat(_lcRaw);
+        if (!_lcRaw || isNaN(_loadCoef) || _loadCoef <= 0) {
+            notify('❌ Укажите коэффициент нагрузки (число больше нуля)', 'error');
+            if (_lcEl) { _lcEl.classList.add('lead-invalid'); _lcEl.focus(); }
+            return;
+        }
+    } else {
+        // PATCH tasks-stages: запрет пересечения этапов
+        var _stConf = _taskStagesConflicts();
+        if (_stConf.length) {
+            var _names = _stConf.sort(function(a,b){return a-b;}).map(function(i){
+                return TASK_STAGE_LABELS[TASK_STAGE_ORDER[i]] || TASK_STAGE_ORDER[i];
+            });
+            notify('❌ Этапы пересекаются: ' + _names.join(', ') + '. Начало каждого следующего этапа должно быть позже предыдущего.', 'error');
+            renderTaskStages();
+            return;
+        }
+        // PATCH tasks-lead: банк-руководитель обязателен
+        var _leadDepEl = $('task_lead_department');
+        _leadDep = _leadDepEl ? _leadDepEl.value : '';
+        if (!_leadDep) {
+            notify('❌ Укажите банк-руководитель проверки', 'error');
+            if (_leadDepEl) _leadDepEl.classList.add('lead-invalid');
+            return;
+        }
     }
     var status = $('task_status') ? $('task_status').value : 'active';
     var completed = $('task_completed_at') ? $('task_completed_at').value.trim() : '';
@@ -3220,8 +3257,10 @@ function saveTask() {
         tags: (_tagDraft || []).slice(),
         assignees: getSelectedAssignees(),
         department_ids: getSelectedTaskDepartments(),
-        lead_department: $('task_lead_department') ? $('task_lead_department').value : '',
-        lead_employee: $('task_lead_employee') ? $('task_lead_employee').value : '',
+        task_kind: _taskKind,
+        load_coef: _isOther ? _loadCoef : 0,
+        lead_department: _isOther ? '' : ($('task_lead_department') ? $('task_lead_department').value : ''),
+        lead_employee: _isOther ? '' : ($('task_lead_employee') ? $('task_lead_employee').value : ''),
         is_urgent: $('task_is_urgent') ? !!$('task_is_urgent').checked : false,
         links: (_taskLinksDraft || []).slice(),
         orders: (_taskOrdersDraft || []).slice(),
@@ -3262,8 +3301,16 @@ function deleteTask(id) {
     }).catch(function(err) { if (err && (err.message || '').indexOf('cancelled') !== -1) return; notify('❌ ' + (err.message || 'Ошибка'), 'error'); });
 }
 on('saveTaskBtn', 'click', saveTask);
-on('addTaskBtn', 'click', function() { openTaskModal(null); });
-on('addTaskBtn2', 'click', function() { openTaskModal(null); });
+on('addTaskBtn', 'click', function() { openTaskKindChooser(); });
+on('addTaskBtn2', 'click', function() { openTaskKindChooser(); });
+on('taskKindAudit', 'click', function() {
+    var m = $('taskKindModal'); if (m) m.classList.remove('active');
+    openTaskModal(null, 'audit');
+});
+on('taskKindOther', 'click', function() {
+    var m = $('taskKindModal'); if (m) m.classList.remove('active');
+    openTaskModal(null, 'other');
+});
 on('taskIconPickBtn', 'click', function() {
     var m = $('emojiModal'); if (m) m.classList.add('active');
 });

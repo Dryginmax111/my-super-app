@@ -1048,6 +1048,13 @@ def create_app():
         if 'lead_department' not in cols:
             db.exec("ALTER TABLE tasks ADD COLUMN lead_department TEXT DEFAULT ''")
             print('[INIT] tasks.lead_department добавлено')
+        if 'task_kind' not in cols:
+            db.exec("ALTER TABLE tasks ADD COLUMN task_kind TEXT DEFAULT 'audit'")
+            db.exec("UPDATE tasks SET task_kind='audit' WHERE task_kind IS NULL OR task_kind=''")
+            print('[INIT] tasks.task_kind добавлено')
+        if 'load_coef' not in cols:
+            db.exec("ALTER TABLE tasks ADD COLUMN load_coef REAL DEFAULT 0")
+            print('[INIT] tasks.load_coef добавлено')
         if 'lead_employee' not in cols:
             db.exec("ALTER TABLE tasks ADD COLUMN lead_employee TEXT DEFAULT ''")
             print('[INIT] tasks.lead_employee добавлено')
@@ -1517,6 +1524,11 @@ def create_app():
         if task_type not in _TASK_TYPES:
             task_type = ''
         pocket = str(body.get('pocket', '')).strip()[:200]
+        # Вид задачи: 'audit' (аудиторская проверка) | 'other' (другое) + коэф. нагрузки
+        task_kind = str(body.get('task_kind', 'audit')).strip()
+        if task_kind not in ('audit', 'other'):
+            task_kind = 'audit'
+        load_coef = body.get('load_coef')
         # PATCH tasks-lead: руководитель проверки (банк обязателен, сотрудник опц.)
         lead_department = str(body.get('lead_department', '')).strip()
         lead_employee = str(body.get('lead_employee', '')).strip()
@@ -1735,6 +1747,8 @@ def create_app():
                 'orders': orders,
                 'task_type': task_type,
                 'pocket': pocket,
+                'task_kind': task_kind,
+                'load_coef': load_coef,
                 'lead_department': lead_department,
                 'lead_employee': lead_employee,
                 'stages': stages,

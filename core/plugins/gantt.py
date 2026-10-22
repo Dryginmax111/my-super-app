@@ -612,6 +612,10 @@ body.trk-theme-light .gg-bank-cell.lvl3 { background:#fcdada; color:#9b1c1c; }
             <h1>📅 План проверок</h1>
         </div>
         <div class="head-filters">
+            <div class="ms-dd" id="fKindDD">
+                <button type="button" class="ms-dd-btn" id="fKindBtn">Аудиторская проверка</button>
+                <div class="ms-dd-panel" id="fKindPanel"></div>
+            </div>
             <select id="fType">
                 <option value="">Все типы проверок</option>
                 <option value="розничная">Розничная</option>
@@ -874,12 +878,22 @@ function participantRowsHtml(t, periods, mode, trackW, cellW) {
 
 /* ---- Мультивыбор (Excel-стиль, чекбоксы) для карман / тер банк ---- */
 /* Состояние: Set выбранных значений. Пусто = «все». */
-var msSelected = { dept: {}, pocket: {} };
+var msSelected = { dept: {}, pocket: {}, kind: { audit: true } };
 /* Справочник доступных пунктов: [{value,label}] */
-var msOptions  = { dept: [], pocket: [] };
+var msOptions  = { dept: [], pocket: [], kind: [
+    { value: 'audit', label: 'Аудиторская проверка' },
+    { value: 'other', label: 'Другое' }
+] };
+/* Конфиг панелей мультивыбора: id панели/кнопки и подпись «все». */
+var MS_CFG = {
+    dept:   { panel: 'fDeptPanel',   btn: 'fDeptBtn',   all: 'Все тер банки' },
+    pocket: { panel: 'fPocketPanel', btn: 'fPocketBtn', all: 'Все карманы' },
+    kind:   { panel: 'fKindPanel',   btn: 'fKindBtn',   all: 'Все типы задач' }
+};
 
 function msRenderPanel(kind) {
-    var panelId = kind === 'dept' ? 'fDeptPanel' : 'fPocketPanel';
+    var cfg = MS_CFG[kind] || {};
+    var panelId = cfg.panel;
     var panel = document.getElementById(panelId);
     if (!panel) return;
     var opts = msOptions[kind] || [];
@@ -908,11 +922,11 @@ function msRenderPanel(kind) {
 }
 
 function msUpdateBtn(kind) {
-    var btnId = kind === 'dept' ? 'fDeptBtn' : 'fPocketBtn';
-    var btn = document.getElementById(btnId);
+    var cfg = MS_CFG[kind] || {};
+    var btn = document.getElementById(cfg.btn);
     if (!btn) return;
     var sel = Object.keys(msSelected[kind]);
-    var allLabel = kind === 'dept' ? 'Все тер банки' : 'Все карманы';
+    var allLabel = cfg.all || 'Все';
     if (!sel.length) { btn.textContent = allLabel; return; }
     if (sel.length === 1) {
         var o = (msOptions[kind] || []).find(function(x) { return x.value === sel[0]; });
@@ -938,7 +952,7 @@ function msGetSelected(kind) { return Object.keys(msSelected[kind]); }
 
 /* Открытие/закрытие панелей по клику на кнопку и клику вне */
 function msInit() {
-    [['fDeptDD','fDeptBtn'], ['fPocketDD','fPocketBtn']].forEach(function(pair) {
+    [['fKindDD','fKindBtn'], ['fDeptDD','fDeptBtn'], ['fPocketDD','fPocketBtn']].forEach(function(pair) {
         var dd = document.getElementById(pair[0]);
         var btn = document.getElementById(pair[1]);
         if (!dd || !btn) return;
@@ -1076,6 +1090,9 @@ function load() {
     if (team) q += '&team=' + encodeURIComponent(team);
     var sts = document.getElementById('fStatus').value;
     if (sts) q += '&status=' + encodeURIComponent(sts);
+    msGetSelected('kind').forEach(function(v) {
+        q += '&task_kind=' + encodeURIComponent(v);
+    });
     var fty = document.getElementById('fType').value;
     if (fty) q += '&task_type=' + encodeURIComponent(fty);
     msGetSelected('pocket').forEach(function(v) {
@@ -1407,6 +1424,23 @@ function renderBanks(d, periods, mode, cellW, STAGE_COLORS, STAGE_LABELS) {
     tasks.forEach(function(t) {
         var dids = t.dept_ids || [];
         if (!dids.length) return;
+        /* Задача типа «Другое»: нет этапов, вместо веса этапа — коэффициент
+           нагрузки, действующий на всём интервале [start_date; deadline]. */
+        if ((t.task_kind || 'audit') === 'other') {
+            var lc = (t.load_coef != null ? +t.load_coef : 0) || 0;
+            if (lc <= 0) return;
+            var sd = t.start_date || '';
+            var dl = t.deadline || '';
+            periods.forEach(function(p, i) {
+                var day = pMon(p);
+                if (sd && day < sd) return;
+                if (dl && day > dl) return;
+                dids.forEach(function(did) {
+                    if (load[did]) load[did][i] += lc;
+                });
+            });
+            return;
+        }
         periods.forEach(function(p, i) {
             var mon = pMon(p);
             var st = stageAtMonday(t.stages, mon);
@@ -1511,6 +1545,7 @@ document.addEventListener('click', function(ev) {
 });
 
 msInit();
+msRenderPanel('kind'); msUpdateBtn('kind');
 initDates();
 loadMeta();
 load();
@@ -1619,6 +1654,12 @@ def register(app, db, hooks):
         status = request.args.get('status', '').strip()
         f_type = request.args.get('task_type', '').strip()
         pocket_sel = _multi('pocket')        # список выбранных карманов (пусто = все)
+        # Вид задачи: мультивыбор ('audit'|'other'). Если параметр не передан —
+        # по умолчанию показываем только аудиторские проверки.
+        kind_sel = _multi('task_kind')
+        if not kind_sel:
+            kind_sel = ['audit']
+        kind_set = set(kind_sel)
 
         data = db.load_all()
 
@@ -1662,6 +1703,8 @@ def register(app, db, hooks):
         out = []
         for t in data.get('tasks', []):
             if status and t.get('status') != status:
+                continue
+            if ((t.get('task_kind') or 'audit')) not in kind_set:
                 continue
             if f_type and (t.get('task_type') or '') != f_type:
                 continue
@@ -1719,6 +1762,8 @@ def register(app, db, hooks):
                 'stages': t.get('stages') or [],
                 'task_type': t.get('task_type') or '',
                 'pocket': t.get('pocket') or '',
+                'task_kind': t.get('task_kind') or 'audit',
+                'load_coef': (lambda v: (float(v) if v not in (None, '') else 0.0))(t.get('load_coef')),
                 'dept_ids': t_dept_ids,
                 # П.2: руководитель проверки — для коэффициента нагрузки и 👑
                 'lead_department': t.get('lead_department') or '',

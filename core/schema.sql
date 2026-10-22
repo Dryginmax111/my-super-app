@@ -76,6 +76,10 @@ CREATE TABLE IF NOT EXISTS tasks (
   task_type TEXT DEFAULT '',
   -- Карман: свободный текст, редактируется админом
   pocket TEXT DEFAULT '',
+  -- Вид задачи: 'audit' (аудиторская проверка, по умолчанию) | 'other' (другое)
+  task_kind TEXT DEFAULT 'audit',
+  -- Коэффициент нагрузки (обязателен только для task_kind='other')
+  load_coef REAL DEFAULT 0,
   -- Даты начала этапов (конец вычисляется: начало следующего непустого - 1 день;
   -- у последнего этапа 'оценка_тб' конец = deadline задачи)
   stage_подготовка_start TEXT DEFAULT '',
