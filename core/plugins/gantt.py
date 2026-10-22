@@ -1165,7 +1165,10 @@ def register(app, db, hooks):
                 if tm.get('manager_id'):
                     team_ids.add(tm['manager_id'])
 
-        dept_emp_ids = None
+        # Сотрудники выбранного банка — нужны для fallback-привязки
+        # (задача без прямой привязки task_departments относится к банку
+        # через отделы своих исполнителей — как в app._task_matches_dept).
+        dept_emp_ids = set()
         if dept:
             dept_emp_ids = set(e['id'] for e in data.get('employees', []) if e.get('department_id') == dept)
 
@@ -1200,8 +1203,14 @@ def register(app, db, hooks):
             assigns = t.get('assignees') or []
             if team_ids is not None and not (set(assigns) & team_ids):
                 continue
-            if dept_emp_ids is not None and not (set(assigns) & dept_emp_ids):
-                continue
+            if dept:
+                t_dep_ids = t.get('department_ids') or []
+                if dept in t_dep_ids:
+                    pass  # прямая привязка к банку
+                elif not t_dep_ids and (set(assigns) & dept_emp_ids):
+                    pass  # fallback: нет прямой привязки -> по отделам исполнителей
+                else:
+                    continue
             sd = t.get('start_date') or ''
             dl = t.get('deadline') or ''
             if not sd and not dl:
@@ -1224,7 +1233,11 @@ def register(app, db, hooks):
                         pass
             overdue = bool(dl and dl < today and t.get('status') not in ('done', 'archived'))
             # Тер банки (отделы) задачи — по отделам её исполнителей.
-            t_dept_ids = sorted({emp_dept.get(a, '') for a in assigns if emp_dept.get(a, '')})
+            _direct = [d for d in (t.get('department_ids') or []) if d]
+            if _direct:
+                t_dept_ids = sorted(set(_direct))
+            else:
+                t_dept_ids = sorted({emp_dept.get(a, '') for a in assigns if emp_dept.get(a, '')})
             out.append({
                 'id': t['id'],
                 'name': t.get('name', ''),
