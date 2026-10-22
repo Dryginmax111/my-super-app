@@ -400,22 +400,22 @@ class TrackerDB:
         }
 
     # ---------------- employees ----------------
-    def upsert_employee(self, emp_id, name, color, role, department_id, fired, fired_date, hired_date=''):
+    def upsert_employee(self, emp_id, name, color, role, department_id, fired, fired_date, hired_date='', dir_corp=0.0, dir_retail=0.0):
         now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         row = self.query_one('SELECT id FROM employees WHERE id=?', (emp_id,))
         hired_date = hired_date or ''
         if row:
             self.exec(
                 'UPDATE employees SET name=?, color=?, role=?, department_id=?, '
-                'fired=?, fired_date=?, hired_date=? WHERE id=?',
+                'fired=?, fired_date=?, hired_date=?, dir_corp=?, dir_retail=? WHERE id=?',
                 (name, color, role, department_id, 1 if fired else 0, fired_date,
-                 hired_date, emp_id))
+                 hired_date, dir_corp, dir_retail, emp_id))
             return False
         self.exec(
-            'INSERT INTO employees (id,name,color,role,department_id,fired,fired_date,hired_date,created_at) '
-            'VALUES (?,?,?,?,?,?,?,?,?)',
+            'INSERT INTO employees (id,name,color,role,department_id,fired,fired_date,hired_date,dir_corp,dir_retail,created_at) '
+            'VALUES (?,?,?,?,?,?,?,?,?,?,?)',
             (emp_id, name, color, role, department_id, 1 if fired else 0, fired_date,
-             hired_date, now))
+             hired_date, dir_corp, dir_retail, now))
         return True
 
     def delete_employee(self, emp_id, drop_logs=False):

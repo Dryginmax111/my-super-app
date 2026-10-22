@@ -34,6 +34,8 @@ CREATE TABLE IF NOT EXISTS employees (
   department_id TEXT DEFAULT '',
   fired INTEGER NOT NULL DEFAULT 0,
   fired_date TEXT DEFAULT '',
+  dir_corp REAL NOT NULL DEFAULT 0,
+  dir_retail REAL NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL
 );
 

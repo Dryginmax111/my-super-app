@@ -975,6 +975,17 @@ def create_app():
             print('[INIT] employees.hired_date добавлено')
     except Exception as _e:
         print(f'[INIT] migration hired_date: {_e}')
+    # PATCH — миграция: направление сотрудника (доли корп/розн, сумма=1)
+    try:
+        cols = [r['name'] for r in db.query('PRAGMA table_info(employees)')]
+        if 'dir_corp' not in cols:
+            db.exec("ALTER TABLE employees ADD COLUMN dir_corp REAL NOT NULL DEFAULT 0")
+            print('[INIT] employees.dir_corp добавлено')
+        if 'dir_retail' not in cols:
+            db.exec("ALTER TABLE employees ADD COLUMN dir_retail REAL NOT NULL DEFAULT 0")
+            print('[INIT] employees.dir_retail добавлено')
+    except Exception as _e:
+        print(f'[INIT] migration direction: {_e}')
     # PATCH v1.0.9 — миграция: auto_closed_at в tasks
     try:
         cols = [r['name'] for r in db.query('PRAGMA table_info(tasks)')]
@@ -1237,6 +1248,14 @@ def create_app():
         fired = bool(body.get('fired', False))
         fired_date = str(body.get('fired_date', '')).strip()[:20]
         hired_date = str(body.get('hired_date', '')).strip()[:20]
+        # Направление сотрудника: доли корп/розн, в сумме строго 1.0 (обязательное поле)
+        try:
+            dir_corp = float(body.get('dir_corp', ''))
+            dir_retail = float(body.get('dir_retail', ''))
+        except (TypeError, ValueError):
+            return jsonify({'success': False, 'error': 'Укажите направление сотрудника'}), 400
+        if dir_corp < 0 or dir_retail < 0 or abs((dir_corp + dir_retail) - 1.0) > 1e-6:
+            return jsonify({'success': False, 'error': 'Направление задано неверно: доли корп+розн должны давать 1'}), 400
         if fired_date and not _valid_date(fired_date):
             fired_date = ''
         if not fired:
@@ -1267,7 +1286,7 @@ def create_app():
                 i += 1
                 emp_id = f'{base}_{i}'
 
-        created = db.upsert_employee(emp_id, name, color, role, department_id, fired, fired_date, hired_date)
+        created = db.upsert_employee(emp_id, name, color, role, department_id, fired, fired_date, hired_date, dir_corp, dir_retail)
         _audit(db, u, 'create' if created else 'update', 'employee', emp_id, {'name': name})
 
         try:

@@ -2483,6 +2483,18 @@ function openEmployeeModal(emp) {
     }
     var hiredDate = $('emp_hired_date');
     if (hiredDate) hiredDate.value = (emp && emp.hired_date) || '';
+    var dirSel = $('emp_direction');
+    if (dirSel) {
+        var dc = emp ? Number(emp.dir_corp) : null;
+        var dr = emp ? Number(emp.dir_retail) : null;
+        var dirCode = '';
+        if (emp && !isNaN(dc) && !isNaN(dr)) {
+            if (dc >= 0.99) dirCode = 'corp';
+            else if (dr >= 0.99) dirCode = 'retail';
+            else if (dc > 0 && dr > 0) dirCode = 'mixed';
+        }
+        dirSel.value = dirCode;
+    }
     var firedCb = $('emp_fired');
     var firedDate = $('emp_fired_date');
     if (firedCb) firedCb.checked = !!(emp && emp.fired);
@@ -2576,6 +2588,10 @@ function saveEmployee() {
     var fired = $('emp_fired') ? $('emp_fired').checked : false;
     var firedDate = $('emp_fired_date') ? $('emp_fired_date').value : '';
     if (fired && !firedDate) { notify('❌ Укажите дату увольнения', 'error'); return; }
+    var dirSel = $('emp_direction');
+    var dirCode = dirSel ? (dirSel.value || '') : '';
+    var dirMap = { corp: [1, 0], retail: [0, 1], mixed: [0.5, 0.5] };
+    if (!dirMap[dirCode]) { notify('❌ Укажите направление сотрудника', 'error'); return; }
     var payload = {
         id: $('emp_id') ? ($('emp_id').value || '') : '',
         name: name,
@@ -2585,6 +2601,8 @@ function saveEmployee() {
         fired: fired,
         fired_date: fired ? firedDate : '',
         hired_date: $('emp_hired_date') ? ($('emp_hired_date').value || '') : '',
+        dir_corp: dirMap[dirCode][0],
+        dir_retail: dirMap[dirCode][1],
     };
     apiJson('/api/tracker/employee/save', {
         method: 'POST', headers: {'Content-Type': 'application/json'},
