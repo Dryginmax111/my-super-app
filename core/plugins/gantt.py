@@ -1046,15 +1046,22 @@ function ggTaskPayload() {
     t.lead_department = document.getElementById('ggFLeadDept').value;
     t.lead_employee = document.getElementById('ggFLeadEmp').value;
     var stages = {}; Array.from(document.querySelectorAll('#ggStages input[data-stage-key]')).forEach(function(inp){ stages[inp.getAttribute('data-stage-key')] = inp.value || ''; });
-    t.stages = stages; return t;
+    t.stages = stages;
+    if ((t.task_kind || 'audit') === 'other') { t.lead_department = ''; t.lead_employee = ''; t.stages = {}; }
+    return t;
 }
 function ggTaskSave() {
     var body = document.getElementById('ggTaskBody'); var p = ggTaskPayload();
-    if (!p.department_ids.length) { ggTaskErr('Нужно выбрать минимум один банк-участник.'); return; }
-    if (!p.lead_department) { ggTaskErr('Нужно выбрать банк-руководитель.'); return; }
-    if (p.department_ids.indexOf(p.lead_department) < 0) { ggTaskErr('Банк-руководитель должен входить в состав участников.'); return; }
+    var isOther = (p.task_kind || 'audit') === 'other';
+    if (!isOther) {
+        if (!p.department_ids.length) { ggTaskErr('Нужно выбрать минимум один банк-участник.'); return; }
+        if (!p.lead_department) { ggTaskErr('Нужно выбрать банк-руководитель.'); return; }
+        if (p.department_ids.indexOf(p.lead_department) < 0) { ggTaskErr('Банк-руководитель должен входить в состав участников.'); return; }
+    }
     ggTaskErr(''); body.classList.add('gg-saving');
-    fetch('/api/tracker/task/save', { method:'POST', credentials:'same-origin', headers:{'Content-Type':'application/json'}, body: JSON.stringify(p) })
+    var _hdrs = {'Content-Type':'application/json'};
+    if (window.__ggCsrf) _hdrs['X-CSRF-Token'] = window.__ggCsrf;
+    fetch('/api/tracker/task/save', { method:'POST', credentials:'same-origin', headers:_hdrs, body: JSON.stringify(p) })
         .then(function(r){ return r.json().then(function(d){ return {ok:r.ok, data:d}; }); })
         .then(function(res){ body.classList.remove('gg-saving'); if (!res.ok || !res.data || !res.data.success) throw new Error((res.data && (res.data.error || res.data.message)) || 'Ошибка сохранения'); ggTaskState.loaded = false; ggTaskClose(); load(); })
         .catch(function(err){ body.classList.remove('gg-saving'); ggTaskErr(err && err.message ? err.message : 'Ошибка сохранения'); });
@@ -1065,6 +1072,7 @@ function loadMeta() {
         .then(function(r) { return r.json(); })
         .then(function(d) {
             if (!d.success) return;
+            if (d.csrf_token) window.__ggCsrf = d.csrf_token;
             msSetOptions('dept', (d.departments || []).map(function(x) {
                 return { value: x.id, label: x.name };
             }));
@@ -1625,8 +1633,14 @@ def register(app, db, hooks):
         # PATCH v1.0.5: не грузим все данные ради имён отделов/команд
         departments = db.query('SELECT id, name FROM departments ORDER BY name')
         teams = db.query('SELECT id, name FROM teams ORDER BY name')
+        try:
+            from auth import ensure_csrf as _ensure_csrf
+            _csrf = _ensure_csrf()
+        except Exception:
+            _csrf = ''
         return jsonify({
             'success': True,
+            'csrf_token': _csrf,
             'departments': [{'id': d['id'], 'name': d.get('name', '')} for d in departments],
             'teams': [{'id': t['id'], 'name': t.get('name', '')} for t in teams],
         })
