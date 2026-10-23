@@ -17606,6 +17606,22 @@ function openTaskFromUrl(){
 (function(){
   var HM = { data:null, kind:{audit:true}, bank:{}, dir:{retail:true,corp:true,hybrid:true},
              mode:'week', expanded:{}, banksInit:false };
+  /* PATCH hm-emp-scope: esc/apiJson объявлены function-декларациями в другом
+     скоупе и НЕ видны внутри этого IIFE (pageerror "esc/apiJson is not defined").
+     Берём глобальную версию, если есть, иначе локальный фолбэк. */
+  var esc = (typeof window.esc === 'function') ? window.esc : function(s){
+    return String(s==null?'':s).replace(/[&<>"']/g, function(c){
+      return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];
+    });
+  };
+  var apiJson = (typeof window.apiJson === 'function') ? window.apiJson : function(url, options){
+    options = options || {};
+    options.headers = Object.assign({}, options.headers || {});
+    if (window.CSRF && options.method && options.method !== 'GET')
+      options.headers['X-CSRF-Token'] = window.CSRF;
+    if (!options.credentials) options.credentials = 'same-origin';
+    return fetch(url, options).then(function(r){ return r.json(); });
+  };
   function dirEmoji(k){ return k==='retail'?'🔴':(k==='corp'?'🔵':(k==='hybrid'?'🟣':'⚪')); }
   function dirLabel(k){ return k==='retail'?'розн':(k==='corp'?'корп':(k==='hybrid'?'гибрид':'—')); }
   function ddRender(host, items, sel, onchange){
