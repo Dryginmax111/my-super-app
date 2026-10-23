@@ -9763,6 +9763,16 @@ table.hm-emp-table thead th.hm-emp-name { z-index:4; }
 .hm-bank-row td.hm-emp-name { background:#eef2ff; font-weight:600; }
 .hm-caret { display:inline-block; width:12px; color:#6b7280; }
 .hm-bank-meta { color:#6b7280; font-weight:400; font-size:0.89rem; margin-left:6px; }
+/* Строка штатной численности банка (всегда видимая, курсив, смайлики-пипсы) */
+.hm-staff-row td.hm-staff-meta {
+  text-align:left; font-style:italic; font-size:1.04rem;
+  color:#4b5563; background:#f8fafc; padding:5px 10px 5px 30px; }
+.hm-staff-item { margin-right:18px; white-space:nowrap; }
+.hm-staff-item b { font-style:normal; color:#1f2937; }
+.hm-pip { display:inline-block; font-style:normal; margin:0 0.5px; vertical-align:-1px; }
+/* половинка: обрезаем смайлик по ширине ровно наполовину */
+.hm-pip-half { width:0.55em; overflow:hidden; }
+.hm-pip-none { color:#9ca3af; }
 .hm-emp-row td.hm-emp-sub { padding-left:30px; }
 .hm-emp-dir { color:#9ca3af; font-size:0.89rem; }
 .hm-emp-cell { font-variant-numeric:tabular-nums; min-width:48px; }

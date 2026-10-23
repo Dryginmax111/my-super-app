@@ -1979,10 +1979,20 @@ def register(app, db, hooks):
             d2 = d1 + timedelta(days=183)
         if d2 < d1:
             d1, d2 = d2, d1
-        # Ограничение ширины: неделя — до ~1.5 года, день — до ~220 дней.
-        max_days = 550 if mode == 'week' else 220
-        if (d2 - d1).days > max_days:
-            d2 = d1 + timedelta(days=max_days)
+        # Ограничение ширины. Неделя — до ~1.5 года (181 день остаётся как есть).
+        # День — тяжёлый расчёт, поэтому показываем только текущий месяц + 2 полных
+        # следующих: до конца месяца через 2 месяца от d1.
+        if mode == 'day':
+            y, m = d1.year, d1.month + 3  # начало месяца через 3 -> минус день = конец +2-го
+            y += (m - 1) // 12
+            m = (m - 1) % 12 + 1
+            cap = date(y, m, 1) - timedelta(days=1)
+            if d2 > cap:
+                d2 = cap
+        else:
+            max_days = 550
+            if (d2 - d1).days > max_days:
+                d2 = d1 + timedelta(days=max_days)
         data = db.load_all()
         res = _heatmap_compute(data, d1, d2, mode)
         res['success'] = True

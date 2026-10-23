@@ -17624,6 +17624,17 @@ function openTaskFromUrl(){
   };
   function dirEmoji(k){ return k==='retail'?'🔴':(k==='corp'?'🔵':(k==='hybrid'?'🟣':'⚪')); }
   function dirLabel(k){ return k==='retail'?'розн':(k==='corp'?'корп':(k==='hybrid'?'гибрид':'—')); }
+  /* Красивое оформление численности: целые смайлики + половинка.
+     retail -> 🔴, corp -> 🔵. round до 0.5. */
+  function staffPips(n, emoji){
+    n = Math.max(0, Math.round((Number(n)||0)*2)/2);
+    var whole = Math.floor(n), hasHalf = (n - whole) >= 0.5;
+    var s = '';
+    for (var i=0;i<whole;i++) s += '<span class="hm-pip">'+emoji+'</span>';
+    if (hasHalf) s += '<span class="hm-pip hm-pip-half">'+emoji+'</span>';
+    if (!s) s = '<span class="hm-pip-none">–</span>';
+    return s;
+  }
   function ddRender(host, items, sel, onchange){
     if (!host) return;
     function btnText(){
@@ -17657,9 +17668,7 @@ function openTaskFromUrl(){
     document.querySelectorAll('.hm-dd.open').forEach(function(x){x.classList.remove('open');});
   });
   function buildFilters(){
-    ddRender(document.getElementById('hmKindDd'),
-      [{value:'audit',label:'Аудиторская проверка'},{value:'other',label:'Другое'}],
-      HM.kind, function(){ hmLoad(); });
+    /* фильтр ТИП ЗАДАЧИ убран: он не влиял на таблицу нагрузки. HM.kind=audit фиксирован. */
     ddRender(document.getElementById('hmDirDd'),
       [{value:'retail',label:'Розница'},{value:'corp',label:'Корпорат'}],
       HM.dir, function(){ hmRender(); });
@@ -17711,11 +17720,17 @@ function openTaskFromUrl(){
     d.banks.forEach(function(b){
       if (Object.keys(HM.bank).length && !HM.bank[b.id]) return;
       var exp = !!HM.expanded[b.id];
+      var colspan = periods.length + 1;
       h += '<tr class="hm-bank-row" data-bank="'+esc(b.id)+'">'
-         + '<td class="hm-emp-name"><span class="hm-caret">'+(exp?'▾':'▸')+'</span> <b>'+esc(b.name)+'</b>'
-         + ' <span class="hm-bank-meta">общая='+b.total+', розн='+b.retail+', корп='+b.corp+'</span></td>';
+         + '<td class="hm-emp-name"><span class="hm-caret">'+(exp?'▾':'▸')+'</span> <b>'+esc(b.name)+'</b></td>';
       periods.forEach(function(){ h += '<td class="hm-emp-cell hm-bank-cell"></td>'; });
       h += '</tr>';
+      /* Всегда видимая строка численности: курсив, смайлики-пипсы (целые + половинка) */
+      h += '<tr class="hm-staff-row"><td class="hm-emp-name hm-staff-meta" colspan="'+colspan+'">'
+         + '<span class="hm-staff-item">общая <b>'+b.total+'</b></span>'
+         + '<span class="hm-staff-item">розн '+staffPips(b.retail,'🔴')+' <b>'+b.retail+'</b></span>'
+         + '<span class="hm-staff-item">корп '+staffPips(b.corp,'🔵')+' <b>'+b.corp+'</b></span>'
+         + '</td></tr>';
       if (exp){
         (b.rows||[]).forEach(function(r){
           if (!dirVisible(r.kind)) return;
