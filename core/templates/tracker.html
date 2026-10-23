@@ -218,11 +218,19 @@
                 <div class="ms-dd-label">НАПРАВЛЕНИЕ</div>
                 <div class="ms-dd" id="hmDirDd"></div>
             </div>
-            <label class="sum-filter"><span>С</span><input type="date" id="hmeFrom"></label>
-            <label class="sum-filter"><span>По</span><input type="date" id="hmeTo"></label>
-            <div class="segmented" id="hmeMode">
-                <button data-m="week" class="active">Неделя</button>
-                <button data-m="day">День</button>
+            <div class="ms-dd-group">
+                <div class="ms-dd-label">ПЕРИОД</div>
+                <div class="hm-period-row">
+                    <label class="sum-filter"><span>С</span><input type="date" id="hmeFrom"></label>
+                    <label class="sum-filter"><span>По</span><input type="date" id="hmeTo"></label>
+                </div>
+            </div>
+            <div class="ms-dd-group">
+                <div class="ms-dd-label">ПРЕДСТАВЛЕНИЕ</div>
+                <div class="segmented" id="hmeMode">
+                    <button data-m="week" class="active">Неделя</button>
+                    <button data-m="day">День</button>
+                </div>
             </div>
             <button class="btn btn-primary" id="hmeApply">✓ Применить</button>
         </div>

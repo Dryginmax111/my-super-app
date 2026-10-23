@@ -17604,7 +17604,7 @@ function openTaskFromUrl(){
 
 /* ===== PATCH heatmap-emp: Тепловая карта сотрудников (банк -> сотрудники) ===== */
 (function(){
-  var HM = { data:null, kind:{audit:true}, bank:{}, dir:{retail:true,corp:true,hybrid:true},
+  var HM = { data:null, kind:{audit:true}, bank:{}, dir:{retail:true,corp:true},
              mode:'week', expanded:{}, banksInit:false };
   /* PATCH hm-emp-scope: esc/apiJson объявлены function-декларациями в другом
      скоупе и НЕ видны внутри этого IIFE (pageerror "esc/apiJson is not defined").
@@ -17661,7 +17661,7 @@ function openTaskFromUrl(){
       [{value:'audit',label:'Аудиторская проверка'},{value:'other',label:'Другое'}],
       HM.kind, function(){ hmLoad(); });
     ddRender(document.getElementById('hmDirDd'),
-      [{value:'retail',label:'Розница'},{value:'corp',label:'Корпорат'},{value:'hybrid',label:'Гибрид'}],
+      [{value:'retail',label:'Розница'},{value:'corp',label:'Корпорат'}],
       HM.dir, function(){ hmRender(); });
     var banks = (HM.data && HM.data.banks || []).map(function(b){return {value:b.id,label:b.name};});
     if (!HM.banksInit && banks.length){ banks.forEach(function(b){ HM.bank[b.value]=true; }); HM.banksInit=true; }

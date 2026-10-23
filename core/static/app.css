@@ -9753,8 +9753,8 @@ body.trk-theme-light .day-assigned-block .dab-tile .dab-add:hover:not(:disabled)
 .hm-dd-item input { margin:0; cursor:pointer; }
 .hm-dd-empty { padding:8px; color:#9ca3af; font-style:italic; }
 .hm-table-wrap#hmeWrap { overflow:auto; padding:0 12px 16px; }
-table.hm-emp-table { border-collapse:collapse; width:max-content; min-width:100%; font-size:0.82rem; }
-table.hm-emp-table th, table.hm-emp-table td { border:1px solid #e5e7eb; padding:5px 9px; text-align:center; white-space:nowrap; }
+table.hm-emp-table { border-collapse:collapse; width:max-content; min-width:100%; font-size:0.98rem; }
+table.hm-emp-table th, table.hm-emp-table td { border:1px solid #e5e7eb; padding:6px 10px; text-align:center; white-space:nowrap; }
 table.hm-emp-table th.hm-emp-name, table.hm-emp-table td.hm-emp-name { text-align:left; position:sticky; left:0; background:#fff; z-index:2; min-width:260px; }
 table.hm-emp-table thead th { background:#f3f4f6; position:sticky; top:0; z-index:3; font-weight:700; }
 table.hm-emp-table thead th.hm-emp-name { z-index:4; }
@@ -9762,7 +9762,7 @@ table.hm-emp-table thead th.hm-emp-name { z-index:4; }
 .hm-bank-row:hover { background:#e0e7ff; }
 .hm-bank-row td.hm-emp-name { background:#eef2ff; font-weight:600; }
 .hm-caret { display:inline-block; width:12px; color:#6b7280; }
-.hm-bank-meta { color:#6b7280; font-weight:400; font-size:0.74rem; margin-left:6px; }
+.hm-bank-meta { color:#6b7280; font-weight:400; font-size:0.89rem; margin-left:6px; }
 .hm-emp-row td.hm-emp-sub { padding-left:30px; }
-.hm-emp-dir { color:#9ca3af; font-size:0.74rem; }
-.hm-emp-cell { font-variant-numeric:tabular-nums; }
+.hm-emp-dir { color:#9ca3af; font-size:0.89rem; }
+.hm-emp-cell { font-variant-numeric:tabular-nums; min-width:48px; }
