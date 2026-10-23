@@ -327,19 +327,19 @@
                     <span class="dict-count" id="departmentsCount">0</span>
                     {% if P.get('action.department.create') %}<button class="dict-add-btn" id="addDepartmentBtn">➕</button>{% endif %}
                 </div>
-                <div class="dict-list" id="departmentsList" style="max-height:38vh;"><div class="dict-empty">Загрузка...</div></div>
-                <div class="dict-section-head" style="margin-top:14px;">
-                    <span class="dict-section-title">🎉 Праздники</span>
-                </div>
-                <div class="dict-list dict-holidays-compact" id="holidaysInlineList" style="max-height:14vh;">
-                    <div class="dict-holidays-grid" id="holidaysGrid"><div class="dict-empty">Загрузка...</div></div>
-                </div>
+                <div class="dict-list dict-list-fixed" id="departmentsList"><div class="dict-empty">Загрузка...</div></div>
                 <div class="dict-section-head" style="margin-top:14px;">
                     <span class="dict-section-title">👥 Команды</span>
                     <span class="dict-count" id="teamsCount">0</span>
                     {% if P.get('action.team.create') %}<button class="dict-add-btn" id="addTeamBtn">➕</button>{% endif %}
                 </div>
-                <div class="dict-list" id="teamsList" style="max-height:24vh;"><div class="dict-empty">Загрузка...</div></div>
+                <div class="dict-list dict-list-fixed" id="teamsList"><div class="dict-empty">Загрузка...</div></div>
+                <div class="dict-section-head" style="margin-top:14px;">
+                    <span class="dict-section-title">🎉 Праздники</span>
+                </div>
+                <div class="dict-list dict-holidays-compact dict-list-fixed" id="holidaysInlineList">
+                    <div class="dict-holidays-grid" id="holidaysGrid"><div class="dict-empty">Загрузка...</div></div>
+                </div>
             </div>
         </div>
         {# PATCH 1.0.10: раздел «Задачи» убран со страницы Справочники — задачи только во вкладке «Задачи» #}

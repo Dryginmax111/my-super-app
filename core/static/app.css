@@ -9793,7 +9793,7 @@ table.hm-emp-table thead th.hm-emp-name { z-index:4; }
     padding: 1px 9px; font-size: 0.8rem; font-weight: 600;
 }
 .dict-emp-groupbody { padding: 4px 0 2px 14px; }
-.dict-emp-item .dict-item-name { font-size: 0.95rem; }
+.dict-emp-item .dict-item-name { font-size: 1.2rem; }
 
 /* строка штатной/фактической численности банка */
 .dict-bank-counts {
@@ -9809,3 +9809,7 @@ table.hm-emp-table thead th.hm-emp-name { z-index:4; }
 .dict-holidays-compact .dict-holidays-grid > div {
     font-size: 0.72rem; padding: 2px 5px;
 }
+
+/* PATCH ref-layout: фикс высота списков правой колонки (банки/команды/праздники) */
+.dict-list-fixed { max-height: 400px; min-height: 200px; overflow-y: auto; }
+.dict-list-fixed.dict-holidays-compact { min-height: 120px; max-height: 180px; }
