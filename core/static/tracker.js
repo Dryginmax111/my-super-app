@@ -4482,181 +4482,13 @@ on('stTagFilter', 'change', loadStats);
 /* ============================================================
    HEATMAP
    ============================================================ */
+/* PATCH hm-emp: старый heatmap удалён — остались тонкие делегаты в новый движок (IIFE в конце файла). */
 function loadHeatmap() {
-    /* PATCH hm-emp: если на странице новый контейнер тепловой карты сотрудников — делегируем в новый движок */
-    if (document.getElementById('hmeWrap') && typeof window.__hmEmpLoad === 'function') { return window.__hmEmpLoad(); }
-    var qs = '';
-    if (state.hmDateFrom && state.hmDateTo) {
-        qs = '?from=' + encodeURIComponent(state.hmDateFrom) + '&to=' + encodeURIComponent(state.hmDateTo);
-    } else {
-        if (!state.hmPeriod) state.hmPeriod = 'month';
-        if (!state.hmAnchor) state.hmAnchor = todayISO();
-        qs = '?period=' + encodeURIComponent(state.hmPeriod) + '&anchor=' + encodeURIComponent(state.hmAnchor);
-    }
-    if (typeof renderHmDeptPills === 'function') renderHmDeptPills();
-    var dept = (window.__trkHmDepts || []).join(',');
-    var team = $('hmTeamFilter') ? ($('hmTeamFilter').value || '') : '';
-    if (dept) qs += '&department=' + encodeURIComponent(dept);
-    if (team) qs += '&team=' + encodeURIComponent(team);
-    var wrap = $('hmWrap');
-    if (wrap) wrap.innerHTML = '<div class="sum-empty">Загрузка...</div>';
-    apiJson('/api/tracker/heatmap' + qs)
-        .then(function(d) { state.heatmap = d; renderHeatmap(); })
-        .catch(function(err) {
-            if (wrap) wrap.innerHTML = '<div class="sum-empty" style="color:#e74c3c;">❌ ' + escapeHtml(err.message || 'Ошибка') + '</div>';
-        });
+    if (typeof window.__hmEmpLoad === 'function') return window.__hmEmpLoad();
 }
 function renderHeatmap() {
-    if (document.getElementById('hmeWrap') && typeof window.renderHeatmap === 'function' && window.renderHeatmap !== renderHeatmap && typeof window.__hmEmpLoad === 'function') { return window.renderHeatmap(); }
-    var d = state.heatmap;
-    var wrap = $('hmWrap');
-    if (!wrap) return;
-    if (!d || !d.rows.length) {
-        wrap.innerHTML = '<div class="sum-empty">Нет сотрудников или данных за период.</div>';
-        return;
-    }
-    var title = $('hmMonthTitle');
-    if (title) title.textContent = d.from ? (formatDateHuman(d.from) + ' — ' + formatDateHuman(d.to)) : '';
-    var today = todayISO();
-    var head = '<tr><th class="emp-col">Сотрудник</th>';
-    d.days.forEach(function(dk) {
-        var wd = new Date(dk + 'T00:00:00').getDay();
-        var cls = [];
-        if (wd === 0 || wd === 6) cls.push('weekend-col');
-        if (dk === today) cls.push('today-col');
-        head += '<th' + (cls.length ? ' class="' + cls.join(' ') + '"' : '') + ' title="' + escapeHtml(dk) + '">' + escapeHtml(formatDateShort(dk)) + '</th>';
-    });
-    head += '<th class="total-col">Итого</th></tr>';
-    var body = '';
-    d.rows.forEach(function(r) {
-        body += '<tr>';
-        var fired = r.employee_fired ? ' 🚪' : '';
-        body += '<td class="emp-cell" data-emp="' + escapeHtml(r.employee_id) + '">'
-            + '<span class="emp-dot" style="background:' + escapeHtml(r.employee_color) + ';box-shadow:0 0 6px ' + escapeHtml(r.employee_color) + ';"></span>'
-            + escName(r.employee_name) + fired + '</td>';
-        r.cells.forEach(function(c) {
-            var cls = [], content = '', titleArr = [c.date];
-            var abs = c.absence_type || (c.is_vacation ? 'vacation' : '');
-            if (abs) { cls.push(absenceClass(abs) + '-cell'); titleArr.push(absenceLabel(abs)); content = absenceIcon(abs); }
-            else if (c.is_holiday) { cls.push('holiday-cell'); titleArr.push('🎉 Праздник'); content = '🎉'; }
-            else if (c.missing) { cls.push('missing-cell'); titleArr.push('⚠ Не заполнено'); content = '!'; }
-            else if (c.is_weekend) { cls.push('weekend-cell'); titleArr.push('Выходной'); }
-            else if (c.hours > 0) {
-                var col = cellLightGreen(c.hours);
-                titleArr.push(formatHours(c.hours));
-                if (c.is_today) cls.push('today-cell');
-                if (c.is_remote) cls.push('has-remote');
-                var cl = cls.length ? ' class="' + cls.join(' ') + '"' : '';
-                body += '<td' + cl + ' style="background:' + col + ';color:#1a9c52;font-weight:700;" '
-                    + 'data-emp="' + escapeHtml(r.employee_id) + '" data-date="' + escapeHtml(c.date) + '" '
-                    + 'title="' + escapeHtml(titleArr.join(' · ')) + '">' + c.hours + '</td>';
-                return;
-            } else { titleArr.push('—'); }
-            if (c.is_today) cls.push('today-cell');
-            var cl2 = cls.length ? ' class="' + cls.join(' ') + '"' : '';
-            body += '<td' + cl2 + ' data-emp="' + escapeHtml(r.employee_id) + '" data-date="' + escapeHtml(c.date) + '" '
-                + 'title="' + escapeHtml(titleArr.join(' · ')) + '">' + content + '</td>';
-        });
-        body += '<td class="total-cell">' + formatHours(r.total_hours) + '</td></tr>';
-    });
-    wrap.innerHTML = '<table class="hm-table"><thead>' + head + '</thead><tbody>' + body + '</tbody></table>';
-    wrap.querySelectorAll('td[data-emp][data-date]').forEach(function(td) {
-        if (td.classList.contains('total-cell')) return;
-        if (td.classList.contains('emp-cell')) {
-            td.addEventListener('click', function() {
-                var empId = this.getAttribute('data-emp');
-                var emp = state.employees.find(function(x) { return x.id === empId; });
-                if (!emp) return;
-                if (confirm('Показать календарь сотрудника «' + maskName(emp.name) + '»?')) {
-                    var tabBtn = document.querySelector('.tracker-tab[data-tab="calendar"]');
-                    if (tabBtn) tabBtn.click();
-                    var cf = $('calEmployeeFilter');
-                    if (cf) cf.value = empId;
-                    state.currentEmployee = empId;
-                    loadCalendar();
-                }
-            });
-            return;
-        }
-        td.addEventListener('click', function() {
-            openEmpDayModal(this.getAttribute('data-emp'), this.getAttribute('data-date'));
-        });
-    });
-    var legend = $('hmLegendBar');
-    if (legend) {
-        var stops = [
-            { label: '0',       color: 'rgba(128,128,128,0.15)' },
-            { label: '2',       color: heatmapColor(2) },
-            { label: '4',       color: heatmapColor(4) },
-            { label: '6',       color: heatmapColor(6) },
-            { label: '8',       color: heatmapColor(8) },
-            { label: '10',      color: heatmapColor(10) },
-            { label: '12+',     color: heatmapColor(12) }
-        ];
-        legend.innerHTML =
-            '<div class="hm-legend-bar-row">' +
-                stops.map(function(s) {
-                    return '<span class="hm-legend-cell" style="background:' + s.color + ';" title="' + s.label + ' ч"></span>';
-                }).join('') +
-            '</div>' +
-            '<div class="hm-legend-bar-labels">' +
-                stops.map(function(s) {
-                    return '<span class="hm-legend-bar-label">' + s.label + '</span>';
-                }).join('') +
-            '</div>';
-    }
+    if (typeof window.__hmEmpRender === 'function') return window.__hmEmpRender();
 }
-function _shiftHmPeriod(delta) {
-    var anchor = state.hmAnchor || todayISO();
-    var d = parseISO(anchor);
-    var p = state.hmPeriod || 'month';
-    if (p === 'year') d.setFullYear(d.getFullYear() + delta);
-    else if (p === 'quarter') d.setMonth(d.getMonth() + delta * 3);
-    else if (p === 'week') d.setDate(d.getDate() + delta * 7);
-    else d.setMonth(d.getMonth() + delta);
-    state.hmAnchor = isoFromDate(d);
-    state.hmDateFrom = ''; state.hmDateTo = '';
-    loadHeatmap();
-}
-on('hmPrevBtn', 'click', function() { _shiftHmPeriod(-1); });
-on('hmNextBtn', 'click', function() { _shiftHmPeriod(1); });
-on('hmTodayBtn', 'click', function() {
-    state.hmDateFrom = ''; state.hmDateTo = '';
-    if ($('hmDateFrom')) $('hmDateFrom').value = '';
-    if ($('hmDateTo')) $('hmDateTo').value = '';
-    state.hmAnchor = todayISO();
-    loadHeatmap();
-});
-on('hmPeriodSeg', 'click', function(e) {
-    var b = e.target.closest('button'); if (!b) return;
-    this.querySelectorAll('button').forEach(function(x) { x.classList.remove('active'); });
-    b.classList.add('active');
-    state.hmPeriod = b.getAttribute('data-p') || 'month';
-    state.hmDateFrom = ''; state.hmDateTo = '';
-    if ($('hmDateFrom')) $('hmDateFrom').value = '';
-    if ($('hmDateTo')) $('hmDateTo').value = '';
-    loadHeatmap();
-});
-on('hmApplyBtn', 'click', function() {
-    var f = $('hmDateFrom') ? $('hmDateFrom').value : '';
-    var t = $('hmDateTo') ? $('hmDateTo').value : '';
-    if (!f || !t) { notify('❌ Укажите обе даты', 'error'); return; }
-    state.hmDateFrom = f; state.hmDateTo = t;
-    loadHeatmap();
-});
-on('hmMonthBtn', 'click', function() {
-    state.hmDateFrom = ''; state.hmDateTo = '';
-    var t = new Date();
-    var y = t.getFullYear(), m = t.getMonth() + 1;
-    var last = new Date(y, m, 0).getDate();
-    state.hmDateFrom = y + '-' + String(m).padStart(2, '0') + '-01';
-    state.hmDateTo = y + '-' + String(m).padStart(2, '0') + '-' + String(last).padStart(2, '0');
-    if ($('hmDateFrom')) $('hmDateFrom').value = state.hmDateFrom;
-    if ($('hmDateTo')) $('hmDateTo').value = state.hmDateTo;
-    loadHeatmap();
-});
-on('hmDeptFilter', 'change', loadHeatmap);
-on('hmTeamFilter', 'change', loadHeatmap);
 
 /* ============================================================
    КАРТОЧКА СОТРУДНИКА ЗА ДЕНЬ
@@ -17896,12 +17728,9 @@ function openTaskFromUrl(){
   });
   var ap = document.getElementById('hmeApply'); if (ap) ap.onclick = hmLoad;
 
-  // переопределяем точки входа вкладки (ловим и локальные вызовы из tab-switch)
-  try { loadHeatmap = function(){ if(!HM.data) buildFilters(); hmLoad(); }; } catch(e){}
-  try { renderHeatmap = function(){ hmRender(); }; } catch(e){}
-  window.loadHeatmap = function(){ if(!HM.data) buildFilters(); hmLoad(); };
-  window.renderHeatmap = function(){ hmRender(); };
+  // единственные точки входа тепловой карты сотрудников (делегаты наверху файла зовут их)
   window.__hmEmpLoad = function(){ if(!HM.data) buildFilters(); hmLoad(); };
+  window.__hmEmpRender = function(){ hmRender(); };
   /* PATCH hm-emp: автозапуск, если вкладка тепловой карты уже активна при загрузке */
   function hmBootIfActive(){
     var pnl = document.getElementById('panel-heatmap');
