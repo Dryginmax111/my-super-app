@@ -52,6 +52,8 @@ window.__trkBuildStatsMenu = function(){
     }
     var perms = window.REESTR_PERMS || {};
     var html = '<div class="spm-item" data-action="builtin"><span>📊</span><span>Встроенная статистика</span></div>';
+    /* PATCH: «Свод» переехал из верхнего ряда в меню «Статистика» */
+    html += '<div class="spm-item" data-action="summary"><span>📊</span><span>Свод</span></div>';
     var arr = window.__trkPluginRegistry || [];
     for (var i = 0; i < arr.length; i++) {
         var p = arr[i];
@@ -86,6 +88,20 @@ document.addEventListener('click', function(e){
         menu.style.left = Math.min(rect.left, window.innerWidth - 280) + 'px';
         menu.style.top = (rect.bottom + 6) + 'px';
         menu.classList.toggle('active');
+        return;
+    }
+    var sumItem = e.target.closest('#statsPluginMenu [data-action="summary"]');
+    if (sumItem) {
+        e.preventDefault();
+        e.stopPropagation();
+        document.querySelectorAll('.tracker-tab').forEach(function(t){ t.classList.remove('active'); });
+        document.querySelectorAll('.tracker-panel').forEach(function(p){
+            p.classList.toggle('active', p.id === 'panel-summary');
+        });
+        try { localStorage.setItem('tracker_activeTab', 'summary'); } catch (er) {}
+        if (typeof window.__trkLoadSummary === 'function') { try { window.__trkLoadSummary(); } catch (er) {} }
+        var ms = document.getElementById('statsPluginMenu');
+        if (ms) ms.classList.remove('active');
         return;
     }
     var builtin = e.target.closest('#statsPluginMenu [data-action="builtin"]');
@@ -17677,6 +17693,10 @@ function buildGanttTab(){
     if (!tabs) return;
     if (tabs.querySelector('[data-tab-plugin="gantt"]')) return;
     var statsTab = tabs.querySelector('.tracker-tab[data-tab="stats"]');
+    /* PATCH: «План проверок» ПОСЛЕ «Задачи» (перед «Тепловая карта») */
+    var anchorTab = tabs.querySelector('.tracker-tab[data-tab="heatmap"]')
+                 || tabs.querySelector('.tracker-tab[data-tab="tasks"]')
+                 || statsTab;
     var perms = window.REESTR_PERMS || {};
     /* право плагина: если задано в реестре — уважаем; иначе показываем */
     var reg = (window.__trkPluginRegistry || []).filter(function(p){ return p.id === 'gantt'; })[0];
@@ -17691,8 +17711,12 @@ function buildGanttTab(){
         e.stopPropagation();
         window.location.href = url;
     });
-    if (statsTab && statsTab.parentNode === tabs) {
-        tabs.insertBefore(btn, statsTab);   /* между «Свод» и «Статистика» */
+    if (anchorTab && anchorTab.parentNode === tabs) {
+        if (anchorTab.getAttribute('data-tab') === 'tasks') {
+            tabs.insertBefore(btn, anchorTab.nextSibling);
+        } else {
+            tabs.insertBefore(btn, anchorTab);
+        }
     } else {
         tabs.appendChild(btn);
     }

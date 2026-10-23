@@ -57,8 +57,9 @@
     <div class="tracker-tabs">
         {% if P.get('tab.calendar') %}<button class="tracker-tab{% if AT == 'calendar' %} active{% endif %}" data-tab="calendar"><span>📅</span><span>Календарь</span></button>{% endif %}
         {% if P.get('tab.tasks') %}<button class="tracker-tab{% if AT == 'tasks' %} active{% endif %}" data-tab="tasks"><span>📋</span><span>Задачи</span></button>{% endif %}
+        {# PATCH: «План проверок» вставляется сюда JS-ом buildGanttTab() — между «Задачи» и «Тепловая карта» #}
         {% if P.get('tab.heatmap') %}<button class="tracker-tab{% if AT == 'heatmap' %} active{% endif %}" data-tab="heatmap"><span>🔥</span><span>Тепловая карта</span></button>{% endif %}
-        {% if P.get('tab.summary') %}<button class="tracker-tab{% if AT == 'summary' %} active{% endif %}" data-tab="summary"><span>📊</span><span>Свод</span></button>{% endif %}
+        {# PATCH: кнопка «Свод» убрана из верхнего ряда — теперь пункт меню «Статистика» (панель #panel-summary остаётся в DOM). #}
         {% if P.get('tab.stats') %}<button class="tracker-tab{% if AT == 'stats' %} active{% endif %}" data-tab="stats"><span>📈</span><span>Статистика</span></button>{% endif %}
         {% if P.get('tab.dicts') %}<button class="tracker-tab{% if AT == 'dicts' %} active{% endif %}" data-tab="dicts"><span>⚙️</span><span>Справочники</span></button>{% endif %}
     </div>

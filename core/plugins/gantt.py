@@ -18,6 +18,9 @@ function register(){
         setTimeout(register, 200);
         return;
     }
+    /* PATCH: «План проверок» теперь отдельная кнопка в верхнем ряду (buildGanttTab).
+       Пункт в выпадающем меню «Статистика» убран, чтобы не дублировался. */
+    if (false) {
     window.__trkRegisterPlugin({
         id: 'gantt',
         icon: '📊',
@@ -25,6 +28,7 @@ function register(){
         url: '/plugins/gantt/',
         perm: 'plugin.gantt.use'
     });
+    }
 }
 register();
 })();
