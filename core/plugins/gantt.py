@@ -8,6 +8,131 @@ from flask import request, jsonify, Response, redirect
 
 
 # ============================================================
+# Тепловая карта сотрудников — расчёт нагрузки
+# Модель (согласована с владельцем):
+#   нагрузка_сотр(период) =
+#       dir_retail * Σ(розничные проверки банка)/числ_розн_банка
+#     + dir_corp   * Σ(корпоратив. проверки банка)/числ_корп_банка
+#     + Σ(load_coef задач «Другое», где сотрудник назначен)   (фикс, не делится)
+#   Численность направления = сумма долей dir_retail / dir_corp по банку
+#   (гибрид 0.5/0.5 даёт 0.5 в каждое). Нагрузка считается ОДИН раз и
+#   не зависит от фильтра направления (фильтр влияет только на показ строк).
+# ============================================================
+def _heatmap_compute(data, d1, d2, mode):
+    def _d(s):
+        try:
+            return datetime.strptime(s, '%Y-%m-%d').date()
+        except Exception:
+            return None
+    emps = data.get('employees', [])
+    tasks = data.get('tasks', [])
+    dept_name = {x['id']: (x.get('name') or '') for x in data.get('departments', [])}
+    emp_by_dep = {}
+    for e in emps:
+        if e.get('fired'):
+            continue
+        emp_by_dep.setdefault(e.get('department_id') or '', []).append(e)
+
+    def dir_counts(dep):
+        es = emp_by_dep.get(dep, [])
+        r = sum(float(e.get('dir_retail') or 0) for e in es)
+        c = sum(float(e.get('dir_corp') or 0) for e in es)
+        return r, c
+
+    def lead_coef(t, bank_id):
+        if (t.get('lead_department') or '') != bank_id:
+            return 1.0
+        tp = t.get('task_type') or ''
+        if tp == 'розничная':
+            return 2.0
+        if tp == 'корпоративная':
+            return 1.5
+        return 1.0
+
+    # Столбцы-периоды
+    periods = []
+    if mode == 'week':
+        cur = d1 - timedelta(days=d1.weekday())
+        while cur <= d2:
+            periods.append((cur, cur + timedelta(days=6), cur.strftime('%d.%m')))
+            cur += timedelta(days=7)
+    else:
+        cur = d1
+        while cur <= d2:
+            periods.append((cur, cur, cur.strftime('%d.%m')))
+            cur += timedelta(days=1)
+
+    def _ov(a, b, ps, pe):
+        return a is not None and b is not None and a <= pe and b >= ps
+
+    def audit_weight(t, ps, pe):
+        # Вес активного на периоде этапа проверки (как в плане проверок).
+        w = 0.0
+        for s in t.get('stages') or []:
+            if not s.get('start'):
+                continue
+            a = _d(s['start'])
+            b = _d(s.get('end') or t.get('deadline') or s['start'])
+            if _ov(a, b, ps, pe):
+                w = max(w, float(s.get('weight') or 0))
+        return w
+
+    def other_active(t, ps, pe):
+        a = _d(t.get('start_date'))
+        b = _d(t.get('deadline'))
+        if a is None:
+            a = ps
+        if b is None:
+            b = pe
+        return _ov(a, b, ps, pe)
+
+    banks = []
+    for dep in sorted(emp_by_dep.keys(), key=lambda d: dept_name.get(d, d).lower()):
+        if not dep:
+            continue
+        es = emp_by_dep[dep]
+        r_cnt, c_cnt = dir_counts(dep)
+        rows = []
+        for e in sorted(es, key=lambda x: (x.get('name') or '').lower()):
+            dr = float(e.get('dir_retail') or 0)
+            dc = float(e.get('dir_corp') or 0)
+            cells = []
+            for (ps, pe, _lab) in periods:
+                lr = 0.0
+                lc = 0.0
+                oth = 0.0
+                for t in tasks:
+                    if dep not in (t.get('department_ids') or []):
+                        continue
+                    kind = t.get('task_kind') or 'audit'
+                    if kind == 'audit':
+                        w = audit_weight(t, ps, pe)
+                        if w <= 0:
+                            continue
+                        contrib = w * lead_coef(t, dep)
+                        if t.get('task_type') == 'розничная':
+                            lr += contrib
+                        elif t.get('task_type') == 'корпоративная':
+                            lc += contrib
+                    else:
+                        if e['id'] in (t.get('assignees') or []) and other_active(t, ps, pe):
+                            oth += float(t.get('load_coef') or 0)
+                val = (dr * (lr / r_cnt if r_cnt else 0)
+                       + dc * (lc / c_cnt if c_cnt else 0)
+                       + oth)
+                cells.append(round(val, 2))
+            kind = ('hybrid' if (dr > 0 and dc > 0)
+                    else ('retail' if dr > 0 else ('corp' if dc > 0 else 'none')))
+            rows.append({'id': e['id'], 'name': e.get('name', ''),
+                         'kind': kind, 'cells': cells})
+        banks.append({'id': dep, 'name': dept_name.get(dep, dep),
+                      'total': round(r_cnt + c_cnt, 2),
+                      'retail': round(r_cnt, 2), 'corp': round(c_cnt, 2),
+                      'rows': rows})
+    return {'periods': [p[2] for p in periods], 'banks': banks}
+
+
+# ============================================================
 # JS — инжектор кнопки в шапку трекера
 # ============================================================
 _JS = r'''
@@ -1828,6 +1953,43 @@ def register(app, db, hooks):
             'dept_names': dept_name,
             'holidays': data.get('holidays') or {},
         })
+
+    @app.route('/api/plugins/gantt/heatmap', methods=['GET'])
+    def _g_heatmap():
+        try:
+            from auth import current_user, user_has
+            u = current_user(db)
+            if not u:
+                return jsonify({'success': False, 'error': 'auth'}), 401
+            if not user_has(db, u, 'plugin.gantt.use'):
+                return jsonify({'success': False, 'error': 'forbidden'}), 403
+        except Exception:
+            return jsonify({'success': False, 'error': 'auth'}), 401
+        from_d = request.args.get('from', '').strip()
+        to_d = request.args.get('to', '').strip()
+        mode = request.args.get('mode', 'week').strip()
+        if mode not in ('week', 'day'):
+            mode = 'week'
+        try:
+            d1 = datetime.strptime(from_d, '%Y-%m-%d').date()
+            d2 = datetime.strptime(to_d, '%Y-%m-%d').date()
+        except Exception:
+            # По умолчанию — полгода от сегодня.
+            d1 = date.today()
+            d2 = d1 + timedelta(days=183)
+        if d2 < d1:
+            d1, d2 = d2, d1
+        # Ограничение ширины: неделя — до ~1.5 года, день — до ~220 дней.
+        max_days = 550 if mode == 'week' else 220
+        if (d2 - d1).days > max_days:
+            d2 = d1 + timedelta(days=max_days)
+        data = db.load_all()
+        res = _heatmap_compute(data, d1, d2, mode)
+        res['success'] = True
+        res['mode'] = mode
+        res['from'] = d1.strftime('%Y-%m-%d')
+        res['to'] = d2.strftime('%Y-%m-%d')
+        return jsonify(res)
 
     def on_startup(**ctx):
         print('[gantt] готов — «📅 План проверок» в шапке')

@@ -3252,6 +3252,12 @@ function saveTask() {
             if (_lcEl) { _lcEl.classList.add('lead-invalid'); _lcEl.focus(); }
             return;
         }
+        // Задача «Другое» обязана иметь хотя бы одного сотрудника
+        // (её коэффициент нагрузки привязан к назначенным людям).
+        if (!getSelectedAssignees().length) {
+            notify('❌ Назначьте хотя бы одного сотрудника', 'error');
+            return;
+        }
     } else {
         // PATCH tasks-stages: запрет пересечения этапов
         var _stConf = _taskStagesConflicts();
@@ -17760,6 +17766,132 @@ function openTaskFromUrl(){
         }
     }, 200);
 }
+
+/* ===== PATCH heatmap-emp: Тепловая карта сотрудников (банк -> сотрудники) ===== */
+(function(){
+  var HM = { data:null, kind:{audit:true}, bank:{}, dir:{retail:true,corp:true,hybrid:true},
+             mode:'week', expanded:{}, banksInit:false };
+  function dirEmoji(k){ return k==='retail'?'🔴':(k==='corp'?'🔵':(k==='hybrid'?'🟣':'⚪')); }
+  function dirLabel(k){ return k==='retail'?'розн':(k==='corp'?'корп':(k==='hybrid'?'гибрид':'—')); }
+  function ddRender(host, items, sel, onchange){
+    if (!host) return;
+    function btnText(){
+      var c = items.filter(function(i){return sel[i.value];});
+      var t = (!c.length||c.length>=items.length) ? ('Все ('+items.length+')') : c.map(function(x){return x.label;}).join(', ');
+      if (t.length>26) t = c.length+' выбр.';
+      return t;
+    }
+    var h = '<button type="button" class="hm-dd-btn">'+esc(btnText())+'</button><div class="hm-dd-panel">';
+    if (!items.length) h += '<div class="hm-dd-empty">Нет вариантов</div>';
+    items.forEach(function(i){
+      h += '<label class="hm-dd-item"><input type="checkbox" value="'+esc(i.value)+'"'+(sel[i.value]?' checked':'')+'><span>'+esc(i.label)+'</span></label>';
+    });
+    h += '</div>';
+    host.className = 'hm-dd'; host.innerHTML = h;
+    host.querySelector('.hm-dd-btn').onclick = function(ev){
+      ev.stopPropagation();
+      var open = host.classList.contains('open');
+      document.querySelectorAll('.hm-dd.open').forEach(function(x){x.classList.remove('open');});
+      if (!open) host.classList.add('open');
+    };
+    host.querySelectorAll('.hm-dd-item input').forEach(function(cb){
+      cb.onchange = function(){
+        if (cb.checked) sel[cb.value]=true; else delete sel[cb.value];
+        host.querySelector('.hm-dd-btn').textContent = btnText();
+        onchange && onchange();
+      };
+    });
+  }
+  document.addEventListener('click', function(){
+    document.querySelectorAll('.hm-dd.open').forEach(function(x){x.classList.remove('open');});
+  });
+  function buildFilters(){
+    ddRender(document.getElementById('hmKindDd'),
+      [{value:'audit',label:'Аудиторская проверка'},{value:'other',label:'Другое'}],
+      HM.kind, function(){ hmLoad(); });
+    ddRender(document.getElementById('hmDirDd'),
+      [{value:'retail',label:'Розница'},{value:'corp',label:'Корпорат'},{value:'hybrid',label:'Гибрид'}],
+      HM.dir, function(){ hmRender(); });
+    var banks = (HM.data && HM.data.banks || []).map(function(b){return {value:b.id,label:b.name};});
+    if (!HM.banksInit && banks.length){ banks.forEach(function(b){ HM.bank[b.value]=true; }); HM.banksInit=true; }
+    ddRender(document.getElementById('hmBankDd'), banks, HM.bank, function(){ hmRender(); });
+  }
+
+  function hmLoad(){
+    var kinds = Object.keys(HM.kind).filter(function(k){return HM.kind[k];});
+    if (!kinds.length) kinds=['audit'];
+    var from = (document.getElementById('hmeFrom')||{}).value || '';
+    var to   = (document.getElementById('hmeTo')||{}).value || '';
+    var qs = '?mode='+encodeURIComponent(HM.mode);
+    if (from) qs += '&from='+encodeURIComponent(from);
+    if (to)   qs += '&to='+encodeURIComponent(to);
+    kinds.forEach(function(k){ qs += '&task_kind='+encodeURIComponent(k); });
+    var wrap = document.getElementById('hmeWrap');
+    if (wrap) wrap.innerHTML = '<div class="sum-empty">Загрузка…</div>';
+    apiJson('/api/plugins/gantt/heatmap'+qs)
+      .then(function(d){
+        HM.data = d;
+        if (!document.getElementById('hmeFrom').value && d.from) document.getElementById('hmeFrom').value=d.from;
+        if (!document.getElementById('hmeTo').value && d.to) document.getElementById('hmeTo').value=d.to;
+        buildFilters();
+        hmRender();
+      })
+      .catch(function(){ if(wrap) wrap.innerHTML='<div class="sum-empty">Ошибка загрузки</div>'; });
+  }
+
+  function hmRender(){
+    var d = HM.data, wrap = document.getElementById('hmeWrap');
+    if (!wrap) return;
+    if (!d || !d.banks || !d.banks.length){ wrap.innerHTML='<div class="sum-empty">Нет данных</div>'; return; }
+    var periods = d.periods || [];
+    var dirOn = HM.dir, anyDir = Object.keys(dirOn).some(function(k){return dirOn[k];});
+    function dirVisible(k){ if(!anyDir) return true; if(k==='hybrid') return true; return !!dirOn[k]; }
+    var h = '<table class="hm-emp-table"><thead><tr><th class="hm-emp-name">Отдел / сотрудник</th>';
+    periods.forEach(function(p){ h += '<th class="hm-emp-cell">'+esc(p)+'</th>'; });
+    h += '</tr></thead><tbody>';
+    d.banks.forEach(function(b){
+      if (Object.keys(HM.bank).length && !HM.bank[b.id]) return;
+      var exp = !!HM.expanded[b.id];
+      h += '<tr class="hm-bank-row" data-bank="'+esc(b.id)+'">'
+         + '<td class="hm-emp-name"><span class="hm-caret">'+(exp?'▾':'▸')+'</span> <b>'+esc(b.name)+'</b>'
+         + ' <span class="hm-bank-meta">общая='+b.total+', розн='+b.retail+', корп='+b.corp+'</span></td>';
+      periods.forEach(function(){ h += '<td class="hm-emp-cell hm-bank-cell"></td>'; });
+      h += '</tr>';
+      if (exp){
+        (b.rows||[]).forEach(function(r){
+          if (!dirVisible(r.kind)) return;
+          h += '<tr class="hm-emp-row"><td class="hm-emp-name hm-emp-sub">'
+             + dirEmoji(r.kind)+' '+esc(r.name)+' <span class="hm-emp-dir">('+dirLabel(r.kind)+')</span></td>';
+          (r.cells||[]).forEach(function(c){
+            h += '<td class="hm-emp-cell">'+(c? (+c).toFixed(2).replace(/\.00$/,'') : '')+'</td>';
+          });
+          h += '</tr>';
+        });
+      }
+    });
+    h += '</tbody></table>';
+    wrap.innerHTML = h;
+    wrap.querySelectorAll('.hm-bank-row').forEach(function(tr){
+      tr.onclick = function(){ var id=tr.getAttribute('data-bank'); HM.expanded[id]=!HM.expanded[id]; hmRender(); };
+    });
+  }
+
+  // режим неделя/день
+  document.addEventListener('click', function(e){
+    var b = e.target.closest && e.target.closest('#hmeMode button');
+    if (!b) return;
+    document.querySelectorAll('#hmeMode button').forEach(function(x){x.classList.remove('active');});
+    b.classList.add('active'); HM.mode = b.getAttribute('data-m')||'week'; hmLoad();
+  });
+  var ap = document.getElementById('hmeApply'); if (ap) ap.onclick = hmLoad;
+
+  // переопределяем точки входа вкладки (ловим и локальные вызовы из tab-switch)
+  try { loadHeatmap = function(){ if(!HM.data) buildFilters(); hmLoad(); }; } catch(e){}
+  try { renderHeatmap = function(){ hmRender(); }; } catch(e){}
+  window.loadHeatmap = function(){ if(!HM.data) buildFilters(); hmLoad(); };
+  window.renderHeatmap = function(){ hmRender(); };
+  window.__hmEmpLoad = function(){ if(!HM.data) buildFilters(); hmLoad(); };
+})();
 
 function init(){
     buildGanttTab();

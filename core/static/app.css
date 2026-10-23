@@ -9736,3 +9736,33 @@ body.trk-theme-light .day-assigned-block .dab-tile .dab-add:hover:not(:disabled)
 .trk-bell-markall--global:hover {
     background: rgba(231,76,60,0.10) !important;
 }
+
+/* ===== PATCH heatmap-emp: тепловая карта сотрудников ===== */
+#hmEmpToolbar { display:flex; flex-wrap:wrap; align-items:flex-end; gap:12px; padding:10px 12px; }
+#hmEmpToolbar .ms-dd-group { display:inline-flex; flex-direction:column; gap:3px; }
+#hmEmpToolbar .ms-dd-label { font-size:0.62rem; letter-spacing:.04em; text-transform:uppercase; color:#6b7280; font-weight:700; }
+.hm-dd { position:relative; display:inline-block; font-size:0.82rem; }
+.hm-dd-btn { background:#fff; border:1px solid #d1d5db; border-radius:7px; padding:6px 24px 6px 10px; cursor:pointer; position:relative; min-width:120px; text-align:left; }
+.hm-dd-btn::after { content:'▾'; position:absolute; right:9px; top:50%; transform:translateY(-50%); color:#9ca3af; font-size:0.7rem; }
+.hm-dd-btn:hover { border-color:#4f8cff; }
+.hm-dd.open .hm-dd-btn { border-color:#4f8cff; }
+.hm-dd-panel { display:none; position:absolute; z-index:30; top:calc(100% + 4px); left:0; min-width:210px; max-height:300px; overflow:auto; background:#fff; border:1px solid #d1d5db; border-radius:8px; box-shadow:0 8px 24px rgba(0,0,0,0.12); padding:4px; }
+.hm-dd.open .hm-dd-panel { display:block; }
+.hm-dd-item { display:flex; align-items:center; gap:8px; padding:6px 8px; border-radius:6px; cursor:pointer; }
+.hm-dd-item:hover { background:rgba(79,140,255,0.1); }
+.hm-dd-item input { margin:0; cursor:pointer; }
+.hm-dd-empty { padding:8px; color:#9ca3af; font-style:italic; }
+.hm-table-wrap#hmeWrap { overflow:auto; padding:0 12px 16px; }
+table.hm-emp-table { border-collapse:collapse; width:max-content; min-width:100%; font-size:0.82rem; }
+table.hm-emp-table th, table.hm-emp-table td { border:1px solid #e5e7eb; padding:5px 9px; text-align:center; white-space:nowrap; }
+table.hm-emp-table th.hm-emp-name, table.hm-emp-table td.hm-emp-name { text-align:left; position:sticky; left:0; background:#fff; z-index:2; min-width:260px; }
+table.hm-emp-table thead th { background:#f3f4f6; position:sticky; top:0; z-index:3; font-weight:700; }
+table.hm-emp-table thead th.hm-emp-name { z-index:4; }
+.hm-bank-row { cursor:pointer; background:#eef2ff; }
+.hm-bank-row:hover { background:#e0e7ff; }
+.hm-bank-row td.hm-emp-name { background:#eef2ff; font-weight:600; }
+.hm-caret { display:inline-block; width:12px; color:#6b7280; }
+.hm-bank-meta { color:#6b7280; font-weight:400; font-size:0.74rem; margin-left:6px; }
+.hm-emp-row td.hm-emp-sub { padding-left:30px; }
+.hm-emp-dir { color:#9ca3af; font-size:0.74rem; }
+.hm-emp-cell { font-variant-numeric:tabular-nums; }

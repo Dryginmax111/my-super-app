@@ -1647,6 +1647,9 @@ def create_app():
             if _lc <= 0:
                 return jsonify({'success': False,
                                 'error': 'Укажите коэффициент нагрузки (число больше нуля)'}), 400
+            if not assignees:
+                return jsonify({'success': False,
+                                'error': 'Назначьте хотя бы одного сотрудника'}), 400
             load_coef = _lc
             lead_department = ''
             lead_employee = ''
