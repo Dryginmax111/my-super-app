@@ -461,22 +461,30 @@ class TrackerDB:
         return r is not None
 
     # ---------------- departments ----------------
-    def upsert_department(self, dep_id, name, color, head_employee_id=''):
+    def upsert_department(self, dep_id, name, color, head_employee_id='', headcount=None):
         row = self.query_one('SELECT id FROM departments WHERE id=?', (dep_id,))
         if row:
             try:
-                self.exec('UPDATE departments SET name=?, color=?, head_employee_id=? WHERE id=?',
-                          (name, color, head_employee_id, dep_id))
+                self.exec('UPDATE departments SET name=?, color=?, head_employee_id=?, headcount=? WHERE id=?',
+                          (name, color, head_employee_id, headcount, dep_id))
             except sqlite3.OperationalError:
-                self.exec('UPDATE departments SET name=?, color=? WHERE id=?',
-                          (name, color, dep_id))
+                try:
+                    self.exec('UPDATE departments SET name=?, color=?, head_employee_id=? WHERE id=?',
+                              (name, color, head_employee_id, dep_id))
+                except sqlite3.OperationalError:
+                    self.exec('UPDATE departments SET name=?, color=? WHERE id=?',
+                              (name, color, dep_id))
             return False
         try:
-            self.exec('INSERT INTO departments (id,name,color,head_employee_id) VALUES (?,?,?,?)',
-                      (dep_id, name, color, head_employee_id))
+            self.exec('INSERT INTO departments (id,name,color,head_employee_id,headcount) VALUES (?,?,?,?,?)',
+                      (dep_id, name, color, head_employee_id, headcount))
         except sqlite3.OperationalError:
-            self.exec('INSERT INTO departments (id,name,color) VALUES (?,?,?)',
-                      (dep_id, name, color))
+            try:
+                self.exec('INSERT INTO departments (id,name,color,head_employee_id) VALUES (?,?,?,?)',
+                          (dep_id, name, color, head_employee_id))
+            except sqlite3.OperationalError:
+                self.exec('INSERT INTO departments (id,name,color) VALUES (?,?,?)',
+                          (dep_id, name, color))
         return True
 
     def delete_department(self, dep_id):

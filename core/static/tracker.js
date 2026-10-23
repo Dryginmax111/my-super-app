@@ -840,18 +840,20 @@ function renderDepartments() {
     if (!list) return;
     var deps = state.departments || [];
     if (cnt) cnt.textContent = deps.length;
-    if (!deps.length) { list.innerHTML = '<div class="dict-empty">Пока нет отделов</div>'; return; }
+    if (!deps.length) { list.innerHTML = '<div class="dict-empty">Пока нет банков</div>'; return; }
     var canEdit = hasPerm('action.department.edit');
     var canDel = hasPerm('action.department.delete');
     var html = '';
     deps.forEach(function(dep) {
-        var count = (state.employees || []).filter(function(e) { return e.department_id === dep.id; }).length;
+        var count = (state.employees || []).filter(function(e) { return e.department_id === dep.id && !e.fired; }).length;
         var _head = dep.head_employee_id ? state.employees.find(function(e) { return e.id === dep.head_employee_id; }) : null;
         var _headTxt = _head ? '<span class="badge badge-dept">👤 ' + escName(_head.name) + '</span>' : '';
+        var _hc = (dep.headcount === null || dep.headcount === undefined || dep.headcount === '') ? '–' : dep.headcount;
         html += '<div class="dict-item" data-id="' + escapeHtml(dep.id) + '">'
             + '<span class="dict-item-dot" style="background:' + escapeHtml(dep.color || '#7a9ab5') + '; box-shadow:0 0 8px ' + escapeHtml(dep.color || '#7a9ab5') + ';"></span>'
             + '<div class="dict-item-body"><div class="dict-item-name">' + escapeHtml(dep.name) + '</div>'
-            + '<div class="dict-item-meta"><span class="badge">👥 ' + count + '</span>' + _headTxt + '</div>'
+            + '<div class="dict-bank-counts">штатная численность: <b>' + escapeHtml(String(_hc)) + '</b>\nфактическая численность: <b>' + count + '</b></div>'
+            + (_headTxt ? '<div class="dict-item-meta">' + _headTxt + '</div>' : '')
             + '</div><div class="dict-actions">'
             + (canEdit ? '<button class="dict-action-btn" data-act="edit">✏️</button>' : '')
             + (canDel ? '<button class="dict-action-btn danger" data-act="delete">🗑</button>' : '')
@@ -880,8 +882,11 @@ function renderEmployees() {
     if (!state.employees.length) { list.innerHTML = '<div class="dict-empty">Пока нет сотрудников</div>'; return; }
     var canEdit = hasPerm('action.employee.edit');
     var canDel = hasPerm('action.employee.delete');
-    var html = '';
-    state.employees.forEach(function(e) {
+    if (!window.__empDictCollapsed) window.__empDictCollapsed = {};
+    var collapsed = window.__empDictCollapsed;
+
+    // карточка одного сотрудника
+    function empCard(e) {
         var color = e.color || '#00897b';
         var vac = (e.vacations || []).filter(function(v) { return (v.type||'vacation') === 'vacation'; }).length;
         var sick = (e.vacations || []).filter(function(v) { return v.type === 'sick_leave'; }).length;
@@ -891,28 +896,75 @@ function renderEmployees() {
         if (sick) badges += '<span class="badge badge-sick">🤒 ' + sick + '</span>';
         if (trip) badges += '<span class="badge badge-trip">✈️ ' + trip + '</span>';
         var metaArr = [];
-        if (e.department) metaArr.push('<span class="badge badge-dept">🏢 ' + escapeHtml(e.department) + '</span>');
         if (e.role) metaArr.push(escapeHtml(e.role));
         if (e.fired) metaArr.push('<span class="badge badge-fired">🚪 уволен ' + escapeHtml(e.fired_date || '') + '</span>');
-        html += '<div class="dict-item' + (e.fired ? ' fired' : '') + '" data-id="' + escapeHtml(e.id) + '">'
+        // эмодзи направления
+        var dc = +e.dir_corp || 0, dr = +e.dir_retail || 0, dirEmo = '';
+        if (dc > 0 && dr > 0) dirEmo = '🟣'; else if (dr > 0) dirEmo = '🔴'; else if (dc > 0) dirEmo = '🔵'; else dirEmo = '⚪';
+        return '<div class="dict-item dict-emp-item' + (e.fired ? ' fired' : '') + '" data-id="' + escapeHtml(e.id) + '">'
             + '<span class="dict-item-dot" style="background:' + escapeHtml(color) + '; box-shadow:0 0 8px ' + escapeHtml(color) + ';"></span>'
-            + '<div class="dict-item-body"><div class="dict-item-name">' + escName(e.name) + '</div>'
+            + '<div class="dict-item-body"><div class="dict-item-name">' + dirEmo + ' ' + escName(e.name) + '</div>'
             + (metaArr.length || badges ? '<div class="dict-item-meta">' + badges + metaArr.join(' ') + '</div>' : '')
             + '</div><div class="dict-actions">'
             + (canEdit ? '<button class="dict-action-btn" data-act="edit">✏️</button>' : '')
             + (canDel ? '<button class="dict-action-btn danger" data-act="delete">🗑</button>' : '')
             + '</div></div>';
+    }
+
+    // группировка по банкам
+    var deps = (state.departments || []).slice();
+    var byDep = {};
+    deps.forEach(function(d) { byDep[d.id] = []; });
+    var noDep = [];
+    state.employees.forEach(function(e) {
+        if (e.department_id && byDep[e.department_id]) byDep[e.department_id].push(e);
+        else noDep.push(e);
     });
-    list.innerHTML = html;
-    list.querySelectorAll('.dict-item').forEach(function(item) {
+
+    var html = '';
+    function groupBlock(key, title, color, emps) {
+        if (!emps.length) return '';
+        var isCol = !!collapsed[key];
+        var caret = isCol ? '▸' : '▾';
+        var dot = color ? '<span class="dict-item-dot" style="background:' + escapeHtml(color) + '; box-shadow:0 0 8px ' + escapeHtml(color) + ';"></span>' : '';
+        var h = '<div class="dict-emp-group' + (isCol ? ' collapsed' : '') + '" data-gkey="' + escapeHtml(key) + '">'
+            + '<div class="dict-emp-grouphead" data-gtoggle="' + escapeHtml(key) + '">'
+            + '<span class="dict-emp-caret">' + caret + '</span>'
+            + dot
+            + '<span class="dict-emp-groupname">' + escapeHtml(title) + '</span>'
+            + '<span class="dict-emp-groupcount">' + emps.length + '</span>'
+            + '</div>'
+            + '<div class="dict-emp-groupbody"' + (isCol ? ' style="display:none;"' : '') + '>';
+        emps.forEach(function(e) { h += empCard(e); });
+        h += '</div></div>';
+        return h;
+    }
+    deps.forEach(function(d) { html += groupBlock(d.id, d.name, d.color, byDep[d.id] || []); });
+    html += groupBlock('__none__', 'Без банка', '#94a3b8', noDep);
+    list.innerHTML = html || '<div class="dict-empty">Пока нет сотрудников</div>';
+
+    // тоггл сворачивания группы
+    list.querySelectorAll('[data-gtoggle]').forEach(function(hd) {
+        hd.addEventListener('click', function() {
+            var k = hd.getAttribute('data-gtoggle');
+            collapsed[k] = !collapsed[k];
+            renderEmployees();
+        });
+    });
+    // кнопки сотрудника
+    list.querySelectorAll('.dict-emp-item').forEach(function(item) {
         var id = item.getAttribute('data-id');
         var eb = item.querySelector('[data-act="edit"]');
         var db = item.querySelector('[data-act="delete"]');
-        if (eb) eb.addEventListener('click', function() {
+        if (eb) eb.addEventListener('click', function(ev) {
+            ev.stopPropagation();
             var emp = state.employees.find(function(x) { return x.id === id; });
             if (emp) openEmployeeModal(emp);
         });
-        if (db) db.addEventListener('click', function() { deleteEmployee(id); });
+        if (db) db.addEventListener('click', function(ev) {
+            ev.stopPropagation();
+            deleteEmployee(id);
+        });
     });
 }
 
@@ -2424,11 +2476,12 @@ on('logExistingTabs', 'click', function(e) {
    ============================================================ */
 function openDepartmentModal(dep) {
     dep = dep || null;
-    var t = $('departmentModalTitle'); if (t) t.textContent = dep ? 'Редактировать отдел' : 'Новый отдел';
+    var t = $('departmentModalTitle'); if (t) t.textContent = dep ? 'Редактировать банк' : 'Новый банк';
     var g = function(id, v) { var el = $(id); if (el) el.value = v; };
     g('dep_id', dep ? dep.id : '');
     g('dep_name', dep ? dep.name : '');
     g('dep_color', (dep && dep.color) || '#00897b');
+    g('dep_headcount', (dep && dep.headcount !== null && dep.headcount !== undefined) ? dep.headcount : '');
     var headSel = $('dep_head');
     if (headSel) {
         headSel.innerHTML = '<option value="">— не указан —</option>'
@@ -2449,6 +2502,7 @@ function saveDepartment() {
         name: name,
         color: $('dep_color') ? $('dep_color').value : '#00897b',
         head_employee_id: $('dep_head') ? ($('dep_head').value || '') : '',
+        headcount: ($('dep_headcount') && $('dep_headcount').value !== '') ? $('dep_headcount').value : null,
     };
     apiJson('/api/tracker/department/save', {
         method: 'POST', headers: {'Content-Type': 'application/json'},

@@ -967,6 +967,14 @@ def create_app():
             print('[INIT] departments.head_employee_id добавлено')
     except Exception as _e:
         print(f'[INIT] migration head_employee_id: {_e}')
+    # PATCH — миграция: штатная численность банка (headcount)
+    try:
+        cols = [r['name'] for r in db.query('PRAGMA table_info(departments)')]
+        if 'headcount' not in cols:
+            db.exec("ALTER TABLE departments ADD COLUMN headcount INTEGER DEFAULT NULL")
+            print('[INIT] departments.headcount добавлено')
+    except Exception as _e:
+        print(f'[INIT] migration headcount: {_e}')
     # PATCH v1.0.3 — миграция: hired_date в employees
     try:
         cols = [r['name'] for r in db.query('PRAGMA table_info(employees)')]
@@ -1403,6 +1411,16 @@ def create_app():
         name = str(body.get('name', '')).strip()[:80]
         color = str(body.get('color', '')).strip()[:20] or '#00897b'
         head_employee_id = str(body.get('head_employee_id', '')).strip()[:64]
+        # штатная численность: пусто/невалидно -> NULL
+        _hc_raw = body.get('headcount', None)
+        headcount = None
+        if _hc_raw not in (None, ''):
+            try:
+                headcount = int(_hc_raw)
+                if headcount < 0:
+                    headcount = 0
+            except (TypeError, ValueError):
+                headcount = None
         if not name:
             return jsonify({'success': False, 'error': 'Название обязательно'}), 400
         u = current_user(db)
@@ -1422,9 +1440,12 @@ def create_app():
             if not _emp_ok:
                 head_employee_id = ''
         try:
-            created = db.upsert_department(dep_id, name, color, head_employee_id)
+            created = db.upsert_department(dep_id, name, color, head_employee_id, headcount)
         except TypeError:
-            created = db.upsert_department(dep_id, name, color)
+            try:
+                created = db.upsert_department(dep_id, name, color, head_employee_id)
+            except TypeError:
+                created = db.upsert_department(dep_id, name, color)
         _audit(db, u, 'create' if created else 'update', 'department', dep_id,
                {'name': name, 'head_employee_id': head_employee_id})
         return jsonify({'success': True, 'id': dep_id, 'created': created})

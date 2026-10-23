@@ -23,7 +23,8 @@ CREATE TABLE IF NOT EXISTS departments (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL,
   color TEXT DEFAULT '#00897b',
-  head_employee_id TEXT DEFAULT ''
+  head_employee_id TEXT DEFAULT '',
+  headcount INTEGER DEFAULT NULL
 );
 
 CREATE TABLE IF NOT EXISTS employees (

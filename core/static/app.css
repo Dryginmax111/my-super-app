@@ -9776,3 +9776,36 @@ table.hm-emp-table thead th.hm-emp-name { z-index:4; }
 .hm-emp-row td.hm-emp-sub { padding-left:30px; }
 .hm-emp-dir { color:#9ca3af; font-size:0.89rem; }
 .hm-emp-cell { font-variant-numeric:tabular-nums; min-width:48px; }
+
+/* ===== Справочник: группировка сотрудников по банкам ===== */
+.dict-emp-group { margin-bottom: 6px; }
+.dict-emp-grouphead {
+    display: flex; align-items: center; gap: 8px;
+    padding: 7px 10px; cursor: pointer; user-select: none;
+    background: #f1f5f9; border-radius: 8px; font-weight: 600;
+    transition: background .12s;
+}
+.dict-emp-grouphead:hover { background: #e2e8f0; }
+.dict-emp-caret { width: 14px; color: #64748b; font-size: 0.85rem; }
+.dict-emp-groupname { flex: 1 1 auto; }
+.dict-emp-groupcount {
+    background: #cbd5e1; color: #334155; border-radius: 10px;
+    padding: 1px 9px; font-size: 0.8rem; font-weight: 600;
+}
+.dict-emp-groupbody { padding: 4px 0 2px 14px; }
+.dict-emp-item .dict-item-name { font-size: 0.95rem; }
+
+/* строка штатной/фактической численности банка */
+.dict-bank-counts {
+    white-space: pre-line;
+    font-size: 0.82rem; line-height: 1.35;
+    color: #475569; margin-top: 2px;
+}
+.dict-bank-counts b { color: #1e293b; }
+
+/* компактные праздничные ячейки */
+.dict-holidays-compact .dict-holidays-grid { gap: 3px; }
+.dict-holidays-compact .holiday-cell,
+.dict-holidays-compact .dict-holidays-grid > div {
+    font-size: 0.72rem; padding: 2px 5px;
+}

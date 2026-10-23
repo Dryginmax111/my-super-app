@@ -323,25 +323,23 @@
             </div>
             <div class="dict-section">
                 <div class="dict-section-head">
-                    <span class="dict-section-title">🏢 Отделы</span>
+                    <span class="dict-section-title">🏦 Банки</span>
                     <span class="dict-count" id="departmentsCount">0</span>
                     {% if P.get('action.department.create') %}<button class="dict-add-btn" id="addDepartmentBtn">➕</button>{% endif %}
                 </div>
-                <div class="dict-list" id="departmentsList" style="max-height:30vh;"><div class="dict-empty">Загрузка...</div></div>
-                <div class="dict-section-head">
+                <div class="dict-list" id="departmentsList" style="max-height:38vh;"><div class="dict-empty">Загрузка...</div></div>
+                <div class="dict-section-head" style="margin-top:14px;">
+                    <span class="dict-section-title">🎉 Праздники</span>
+                </div>
+                <div class="dict-list dict-holidays-compact" id="holidaysInlineList" style="max-height:14vh;">
+                    <div class="dict-holidays-grid" id="holidaysGrid"><div class="dict-empty">Загрузка...</div></div>
+                </div>
+                <div class="dict-section-head" style="margin-top:14px;">
                     <span class="dict-section-title">👥 Команды</span>
                     <span class="dict-count" id="teamsCount">0</span>
                     {% if P.get('action.team.create') %}<button class="dict-add-btn" id="addTeamBtn">➕</button>{% endif %}
                 </div>
-                <div class="dict-list" id="teamsList" style="max-height:30vh;"><div class="dict-empty">Загрузка...</div></div>
-                <div class="dict-section">
-                    <div class="dict-section-head">
-                        <span class="dict-section-title">🎉 Праздники</span>
-                    </div>
-                    <div class="dict-list" id="holidaysInlineList" style="max-height:20vh;">
-                        <div class="dict-holidays-grid" id="holidaysGrid"><div class="dict-empty">Загрузка...</div></div>
-                    </div>
-                </div>
+                <div class="dict-list" id="teamsList" style="max-height:24vh;"><div class="dict-empty">Загрузка...</div></div>
             </div>
         </div>
         {# PATCH 1.0.10: раздел «Задачи» убран со страницы Справочники — задачи только во вкладке «Задачи» #}
@@ -399,11 +397,15 @@
     </div>
 </div></div>
 <div class="modal" id="departmentModal"><div class="modal-content">
-    <h2 id="departmentModalTitle">Новый отдел</h2>
+    <h2 id="departmentModalTitle">Новый банк</h2>
     <input type="hidden" id="dep_id">
     <div class="form-group"><label>Название *</label><input type="text" id="dep_name" maxlength="80"></div>
     <div class="form-group"><label>Цвет</label><input type="color" id="dep_color" value="#00897b" style="height:38px;padding:2px;width:80px;"></div>
-    <div class="form-group"><label>👤 Начальник отдела</label>
+    <div class="form-group"><label>👥 Штатная численность</label>
+        <input type="number" id="dep_headcount" min="0" step="1" placeholder="например: 8">
+        <small style="color:#64748b;">Плановое число ставок. Пусто — не задано (покажется «–»).</small>
+    </div>
+    <div class="form-group"><label>👤 Начальник банка</label>
         <select id="dep_head"><option value="">— не указан —</option></select>
     </div>
     <div class="modal-actions">
