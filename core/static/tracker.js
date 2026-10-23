@@ -4483,6 +4483,8 @@ on('stTagFilter', 'change', loadStats);
    HEATMAP
    ============================================================ */
 function loadHeatmap() {
+    /* PATCH hm-emp: если на странице новый контейнер тепловой карты сотрудников — делегируем в новый движок */
+    if (document.getElementById('hmeWrap') && typeof window.__hmEmpLoad === 'function') { return window.__hmEmpLoad(); }
     var qs = '';
     if (state.hmDateFrom && state.hmDateTo) {
         qs = '?from=' + encodeURIComponent(state.hmDateFrom) + '&to=' + encodeURIComponent(state.hmDateTo);
@@ -4505,6 +4507,7 @@ function loadHeatmap() {
         });
 }
 function renderHeatmap() {
+    if (document.getElementById('hmeWrap') && typeof window.renderHeatmap === 'function' && window.renderHeatmap !== renderHeatmap && typeof window.__hmEmpLoad === 'function') { return window.renderHeatmap(); }
     var d = state.heatmap;
     var wrap = $('hmWrap');
     if (!wrap) return;
@@ -17817,7 +17820,15 @@ function openTaskFromUrl(){
     ddRender(document.getElementById('hmBankDd'), banks, HM.bank, function(){ hmRender(); });
   }
 
+  function hmDefaultDates(){
+    function iso(dt){ return dt.getFullYear()+'-'+('0'+(dt.getMonth()+1)).slice(-2)+'-'+('0'+dt.getDate()).slice(-2); }
+    var f=document.getElementById('hmeFrom'), t=document.getElementById('hmeTo');
+    var today=new Date();
+    if (f && !f.value){ f.value=iso(today); }
+    if (t && !t.value){ var d2=new Date(today.getTime()+180*86400000); t.value=iso(d2); }
+  }
   function hmLoad(){
+    hmDefaultDates();
     var kinds = Object.keys(HM.kind).filter(function(k){return HM.kind[k];});
     if (!kinds.length) kinds=['audit'];
     var from = (document.getElementById('hmeFrom')||{}).value || '';
@@ -17891,6 +17902,15 @@ function openTaskFromUrl(){
   window.loadHeatmap = function(){ if(!HM.data) buildFilters(); hmLoad(); };
   window.renderHeatmap = function(){ hmRender(); };
   window.__hmEmpLoad = function(){ if(!HM.data) buildFilters(); hmLoad(); };
+  /* PATCH hm-emp: автозапуск, если вкладка тепловой карты уже активна при загрузке */
+  function hmBootIfActive(){
+    var pnl = document.getElementById('panel-heatmap');
+    var wrap = document.getElementById('hmeWrap');
+    if (pnl && pnl.classList.contains('active') && wrap){ window.__hmEmpLoad(); }
+  }
+  if (document.readyState === 'loading'){ document.addEventListener('DOMContentLoaded', hmBootIfActive); }
+  else { hmBootIfActive(); }
+  setTimeout(hmBootIfActive, 400);
 })();
 
 function init(){
